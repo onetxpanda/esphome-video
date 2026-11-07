@@ -116,8 +116,10 @@ std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &ma
       for (const auto &p : placed)
         if (r.intersects(p))
           score = 0;
+      // Every reticle, its own included: a position pushed back inside the
+      // image (a mark at an edge) can land on its own reticle.
       for (size_t j = 0; j < reticles.size() && score; j++)
-        if (j != i && r.intersects(reticles[j]))
+        if (r.intersects(reticles[j]))
           score = std::min(score, 1);
       if (score > best_score) {
         best_score = score;

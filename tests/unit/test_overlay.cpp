@@ -95,6 +95,15 @@ static void test_collisions() {
   // Same, pushed into a corner where only some positions fit.
   auto r2 = overlay::draw(img, {{5, 5, "31.2C"}, {12, 8, "33.0C"}, {5, 5, "30.1C"}}, s);
   CHECK(r2.size() == 3 && !overlaps(r2));
+  // A mark in a corner: its label is moved inside the image, and must not
+  // land on its own reticle (seen on hardware with the hot spot bottom-left).
+  for (auto c : {std::make_pair(0, H - 1), std::make_pair(W - 1, H - 1), std::make_pair(0, 0),
+                 std::make_pair(W - 1, 0)}) {
+    auto rc = overlay::draw(img, {{c.first, c.second, "93.4C"}}, s);
+    const int reach = s.gap + s.tick;
+    const overlay::Rect own{c.first - reach, c.second - reach, c.first + reach + 1, c.second + reach + 1};
+    CHECK(rc.size() == 1 && !rc[0].intersects(own));
+  }
   // Spread out marks get the preferred position (below).
   auto r3 = overlay::draw(img, {{100, 100, "20.0C"}}, s);
   CHECK(r3.size() == 1 && r3[0].y0 > 100);
