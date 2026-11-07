@@ -1,0 +1,128 @@
+# Compile test: the full thermal pipeline on an ESP32-P4.
+#   mlx90640 -> radiometric -> isp -> overlay -> h264_encoder -> rtsp_server
+#                                            \-> video_camera
+# plus a test pattern as a second encoder source, switched by a select.
+esphome:
+  name: p4-thermal-rtsp
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, mlx90640, radiometric, isp, overlay, video_camera, video_test_pattern, h264_encoder, rtsp_server]
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+i2c:
+  - id: bus_i2c
+    sda: GPIO7
+    scl: GPIO8
+    frequency: 1MHz
+
+mlx90640:
+  id: thermal_sensor
+  i2c_id: bus_i2c
+  refresh_rate: 32Hz
+  frame_mode: merge
+  log_timing: true
+  controls:
+    refresh_rate:
+      name: "Thermal Refresh Rate"
+    frame_mode:
+      name: "Thermal Frame Mode"
+
+radiometric:
+  id: thermal_rad
+  source: thermal_sensor
+  median_filter: true
+  controls:
+    temporal_frames:
+      name: "Thermal Smoothing"
+    median_filter:
+      name: "Thermal Median Filter"
+    outlier_level:
+      name: "Thermal Outlier Level"
+  min:
+    name: "Thermal Min"
+  max:
+    name: "Thermal Max"
+  mean:
+    name: "Thermal Mean"
+  median:
+    name: "Thermal Median"
+  center:
+    name: "Thermal Center"
+
+isp:
+  id: thermal_isp
+  source: thermal_rad
+  scale: 20
+  mirror_x: true
+  upscale: bilinear
+  log_timing: true
+  controls:
+    range_min:
+      name: "Thermal Range Min"
+    range_max:
+      name: "Thermal Range Max"
+    mirror_x:
+      name: "Thermal Mirror"
+    upscale:
+      name: "Thermal Upscale"
+    scaler:
+      name: "Thermal Scaler"
+
+overlay:
+  id: thermal_overlay
+  source: thermal_isp
+  unit: F
+  controls:
+    enabled:
+      name: "Thermal Overlay"
+    unit:
+      name: "Thermal Overlay Unit"
+
+video_camera:
+  name: "Thermal Camera"
+  source: thermal_overlay
+
+video_test_pattern:
+  id: test_pattern
+  width: 320
+  height: 240
+  fps: 10
+
+h264_encoder:
+  id: thermal_h264
+  source: [thermal_overlay, test_pattern]
+
+select:
+  - platform: h264_encoder
+    name: "Stream Source"
+    options: ["Thermal camera", "Test pattern"]
+
+rtsp_server:
+  encoder: thermal_h264
+  path: thermal

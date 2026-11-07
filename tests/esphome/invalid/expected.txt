@@ -1,0 +1,10 @@
+wrong_variant.yaml|The H.264 hardware encoder is only available on ESP32P4
+qp_order.yaml|qp_min must not be greater than qp_max
+track_path.yaml|path must not contain 'trackID='
+too_many_clients.yaml|value must be at most 4
+bad_fps.yaml|value must be at least 1
+no_source.yaml|'source' is a required option for [h264_encoder]
+select_options.yaml|options must give one name per encoder source (2: thermal_cam, pattern), in the same order
+duplicate_source.yaml|source lists the same component more than once
+isp_range.yaml|range_min must be below range_max
+camera_variant.yaml|The hardware JPEG encoder is only available on ESP32P4

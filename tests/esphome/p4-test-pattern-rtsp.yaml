@@ -1,0 +1,50 @@
+# Compile test: ESP32-P4 with the synthetic test pattern feeding the hardware
+# H.264 encoder and RTSP server (no camera needed). Odd size on purpose, to
+# exercise padding to 16-pixel macroblocks.
+esphome:
+  name: p4-test-pattern
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, mlx90640, radiometric, isp, overlay, video_camera, video_test_pattern, h264_encoder, rtsp_server]
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+video_test_pattern:
+  id: pattern
+  width: 330
+  height: 250
+  fps: 15
+
+h264_encoder:
+  id: pattern_h264
+  source: pattern
+  fps: 15
+
+rtsp_server:
+  encoder: pattern_h264
+  path: test

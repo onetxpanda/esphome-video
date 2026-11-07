@@ -1,0 +1,36 @@
+esphome:
+  name: invalid-test
+esp32:
+  variant: esp32p4
+  framework:
+    type: esp-idf
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [video_core, video_controls, mlx90640, radiometric, isp, overlay, video_camera, video_test_pattern, h264_encoder, rtsp_server]
+logger:
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+i2c:
+  sda: GPIO7
+  scl: GPIO8
+mlx90640:
+  id: thermal_sensor
+radiometric:
+  id: thermal_rad
+  source: thermal_sensor
+isp:
+  id: thermal_cam
+  source: thermal_rad
+  scale: 4
+h264_encoder:
+  source: thermal_cam
+  qp_min: 45
+  qp_max: 30
