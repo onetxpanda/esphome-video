@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -85,11 +86,35 @@ struct RtpState {
   uint32_t ssrc{0};
 };
 
+// Memory for clients' send buffers (a frame or more each): PSRAM on the ESP32
+// when there is any, else the ordinary heap.
+void *send_buffer_alloc(size_t bytes);
+void send_buffer_free(void *p);
+
+// Allocator for SendBuffer. A client's buffer is reserved once, when it
+// connects; out of memory then is fatal, as it would be for std::allocator
+// with exceptions disabled.
+template<typename T> struct SendBufferAllocator {
+  using value_type = T;
+  SendBufferAllocator() = default;
+  template<typename U> SendBufferAllocator(const SendBufferAllocator<U> &) {}  // NOLINT
+  T *allocate(size_t n) {
+    void *p = send_buffer_alloc(n * sizeof(T));
+    if (p == nullptr)
+      std::abort();
+    return static_cast<T *>(p);
+  }
+  void deallocate(T *p, size_t) { send_buffer_free(p); }
+  template<typename U> bool operator==(const SendBufferAllocator<U> &) const { return true; }
+  template<typename U> bool operator!=(const SendBufferAllocator<U> &) const { return false; }
+};
+using SendBuffer = std::vector<uint8_t, SendBufferAllocator<uint8_t>>;
+
 // Appends one access unit as RTP packets, each wrapped in an interleaved frame
 // ('$', channel, 16-bit length). NAL units larger than `max_payload` are split
 // into FU-A fragments; the marker bit is set on the access unit's last packet.
 // Access unit delimiters (type 9) are dropped. Returns the number of packets.
-size_t append_access_unit(std::vector<uint8_t> &out, uint8_t channel, const std::vector<NalUnit> &nals,
+size_t append_access_unit(SendBuffer &out, uint8_t channel, const std::vector<NalUnit> &nals,
                           uint32_t rtp_timestamp, RtpState &state, size_t max_payload);
 
 }  // namespace rtsp_server

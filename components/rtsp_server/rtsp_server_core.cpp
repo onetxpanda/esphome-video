@@ -163,6 +163,9 @@ void RtspServerCore::accept_() {
     }
     auto c = std::make_unique<Client>();
     c->fd = fd;
+    // All of this client's budget at once, so sending never reallocates (a
+    // growing vector needs old and new copies at the same time).
+    c->out.reserve(this->config_.max_client_buffer + SEND_SLACK);
     char ip[INET_ADDRSTRLEN] = {0};
     inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
     c->peer = std::string(ip) + ":" + std::to_string(ntohs(addr.sin_port));
@@ -373,7 +376,17 @@ void RtspServerCore::handle_request_(Client &c, const RtspRequest &req) {
 }
 
 void RtspServerCore::send_response_(Client &c, const std::string &response) {
+  this->make_room_(c, response.size());
   c.out.insert(c.out.end(), response.begin(), response.end());
+}
+
+// Drops what has been sent from the front if `bytes` more would not fit in
+// the reserved capacity, so appending does not reallocate.
+void RtspServerCore::make_room_(Client &c, size_t bytes) {
+  if (c.out_off == 0 || c.out.size() + bytes <= c.out.capacity())
+    return;
+  c.out.erase(c.out.begin(), c.out.begin() + static_cast<std::ptrdiff_t>(c.out_off));
+  c.out_off = 0;
 }
 
 void RtspServerCore::set_state_(Client &c, State s) {
@@ -451,6 +464,7 @@ void RtspServerCore::on_access_unit(const uint8_t *data, size_t length, uint32_t
       continue;
     }
     uint32_t rtp_ts = c.ts_base + timestamp_ms * 90u;
+    this->make_room_(c, estimate);
     append_access_unit(c.out, static_cast<uint8_t>(c.transport.rtp_channel), this->nal_scratch_, rtp_ts, c.rtp,
                        this->config_.max_payload);
     this->flush_(c);
