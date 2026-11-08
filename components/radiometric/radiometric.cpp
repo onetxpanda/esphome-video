@@ -76,7 +76,13 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
   Stats st;
   {
     std::lock_guard<std::mutex> lock(this->mutex_);
-    this->processor_.process(in.temps(), out.temps(), in.width, in.height);
+    if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
+      if (!this->memory_error_logged_) {
+        ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);
+        this->memory_error_logged_ = true;
+      }
+      return;
+    }
     st = this->processor_.stats();
     this->latest_ = st;
     this->latest_new_ = true;

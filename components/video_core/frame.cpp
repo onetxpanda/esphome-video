@@ -5,6 +5,11 @@
 namespace esphome {
 namespace video {
 
+#ifndef USE_ESP32  // ESP32: frame_esp.cpp
+void *large_alloc(size_t bytes) { return std::calloc(1, bytes); }
+void large_free(void *p) { std::free(p); }
+#endif
+
 #ifndef USE_ESP32  // ESP32: frame_esp.cpp (newlib has no std::aligned_alloc)
 BufferAllocator default_allocator() {
   BufferAllocator a;

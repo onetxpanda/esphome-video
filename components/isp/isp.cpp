@@ -128,7 +128,13 @@ void Isp::task_loop_() {
 
 void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler) {
   const uint32_t t0 = micros();
-  this->cpu_.tone_map(in.temps(), in.width, in.height, o);
+  if (!this->cpu_.tone_map(in.temps(), in.width, in.height, o)) {
+    if (!this->memory_error_logged_) {
+      ESP_LOGE(TAG, "Out of memory for a %ux%u index buffer; frames are dropped", in.width, in.height);
+      this->memory_error_logged_ = true;
+    }
+    return;
+  }
   const uint32_t t1 = micros();
 
   const int s = o.scale < 1 ? 1 : o.scale;
@@ -203,6 +209,9 @@ bool Isp::render_ppa_(const Options &o, video::ImageFrame &out) {
     heap_caps_free(this->ppa_in_);
     this->ppa_in_ = static_cast<uint8_t *>(
         heap_caps_aligned_calloc(video::dma_alignment(), 1, need, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    if (this->ppa_in_ == nullptr)  // large frames: PSRAM (the PPA driver writes the cache back)
+      this->ppa_in_ = static_cast<uint8_t *>(
+          heap_caps_aligned_calloc(video::dma_alignment(), 1, need, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
     this->ppa_in_cap_ = this->ppa_in_ ? need : 0;
     if (this->ppa_in_ == nullptr)
       return false;

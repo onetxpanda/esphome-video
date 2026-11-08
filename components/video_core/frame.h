@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 #include <vector>
 
 namespace esphome {
@@ -55,6 +56,56 @@ BufferAllocator default_allocator();  // aligned heap memory (host and fallback)
 BufferAllocator dma_allocator();
 size_t dma_alignment();  // L1/L2 cache line size, for DMA engines (PPA, JPEG, H.264)
 #endif
+
+// Memory for large working buffers (whole-frame scratch, tables), zeroed:
+// PSRAM on the device when there is any, else internal RAM. nullptr when out
+// of memory.
+void *large_alloc(size_t bytes);
+void large_free(void *p);
+
+// A fixed-size array of plain data in large_alloc() memory. Unlike
+// std::vector, running out of memory is reported (ensure() returns false)
+// instead of aborting the firmware.
+template<typename T> class LargeBuffer {
+  static_assert(std::is_trivially_copyable<T>::value && std::is_trivially_default_constructible<T>::value,
+                "LargeBuffer holds plain data only");
+
+ public:
+  LargeBuffer() = default;
+  ~LargeBuffer() { this->reset(); }
+  LargeBuffer(const LargeBuffer &) = delete;
+  LargeBuffer &operator=(const LargeBuffer &) = delete;
+
+  // Makes the buffer hold `count` elements: unchanged if it already does,
+  // else newly allocated and zeroed. False (and empty) when out of memory.
+  bool ensure(size_t count) {
+    if (count == this->count_ && (this->data_ != nullptr || count == 0))
+      return true;
+    this->reset();
+    if (count == 0)
+      return true;
+    this->data_ = static_cast<T *>(large_alloc(count * sizeof(T)));
+    if (this->data_ == nullptr)
+      return false;
+    this->count_ = count;
+    return true;
+  }
+  void reset() {
+    if (this->data_ != nullptr)
+      large_free(this->data_);
+    this->data_ = nullptr;
+    this->count_ = 0;
+  }
+  T *data() { return this->data_; }
+  const T *data() const { return this->data_; }
+  size_t size() const { return this->count_; }
+  T &operator[](size_t i) { return this->data_[i]; }
+  const T &operator[](size_t i) const { return this->data_[i]; }
+
+ private:
+  T *data_{nullptr};
+  size_t count_{0};
+};
 
 class FramePool;
 

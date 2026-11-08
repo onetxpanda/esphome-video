@@ -16,6 +16,15 @@ size_t dma_alignment() {
 #endif
 }
 
+void *large_alloc(size_t bytes) {
+  void *p = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM);
+  if (p == nullptr)
+    p = heap_caps_calloc(1, bytes, MALLOC_CAP_DEFAULT);
+  return p;
+}
+
+void large_free(void *p) { heap_caps_free(p); }
+
 BufferAllocator default_allocator() {
   BufferAllocator a;
   a.alloc = [](size_t size, size_t align) -> void * {

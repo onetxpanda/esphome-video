@@ -51,6 +51,7 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
   Processor processor_;
   Options options_;
   Stats latest_;
+  bool memory_error_logged_{false};
   bool latest_new_{false};
 
   video::SinkList<video::RadiometricSink> sinks_;
