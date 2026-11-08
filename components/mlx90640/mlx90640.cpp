@@ -14,6 +14,11 @@ namespace mlx90640 {
 static const char *const TAG = "mlx90640";
 static constexpr int TA_SHIFT = 8;  // reflected temperature offset for open air (Melexis)
 static constexpr size_t POOL_FRAMES = 3;
+// Sub-pages to throw away after start-up or a refresh-rate change. The one
+// being measured when the rate changes comes out with nonsense temperatures
+// across the whole frame (seen as single readings of 150-500 F); two
+// sub-pages is one full frame measured entirely with the new setting.
+static constexpr uint8_t SETTLE_SUBPAGES = 2;
 
 static const char *extract_error(int status) {
   switch (status) {
@@ -96,6 +101,9 @@ bool MLX90640::apply_refresh_rate_(uint8_t r) {
 }
 
 void MLX90640::loop() {
+  const uint32_t settled = this->settle_dropped_.exchange(0);
+  if (settled != 0)
+    ESP_LOGD(TAG, "Discarded %u sub-pages while the sensor settled on a new refresh rate", static_cast<unsigned>(settled));
   const uint32_t errors = this->errors_.load();
   if (errors != this->last_errors_) {
     ESP_LOGW(TAG, "%u sensor read errors", static_cast<unsigned>(errors - this->last_errors_));
@@ -128,6 +136,7 @@ void MLX90640::task_entry_(void *arg) { static_cast<MLX90640 *>(arg)->task_loop_
 void MLX90640::task_loop_() {
   uint8_t rate = this->refresh_rate_;
   uint8_t mode = this->frame_mode_;
+  uint8_t settle = SETTLE_SUBPAGES;
   for (;;) {
     // Settings changed from the main loop.
     if (this->refresh_rate_ != rate) {
@@ -135,6 +144,7 @@ void MLX90640::task_loop_() {
       if (!this->apply_refresh_rate_(rate))
         this->errors_++;
       this->assembler_.set_mode(this->get_frame_mode());  // don't merge across rates
+      settle = SETTLE_SUBPAGES;
     }
     if (this->frame_mode_ != mode) {
       mode = this->frame_mode_;
@@ -167,6 +177,11 @@ void MLX90640::task_loop_() {
     uint32_t t2 = micros();
     this->read_us_ += t2 - t1;
     this->subpages_++;
+    if (settle > 0) {
+      settle--;
+      this->settle_dropped_++;
+      continue;
+    }
 
     const float ta = MLX90640_GetTa(this->raw_, &this->params_);
     MLX90640_CalculateTo(this->raw_, &this->params_, this->emissivity_, ta - TA_SHIFT, this->temps_);

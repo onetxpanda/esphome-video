@@ -67,6 +67,7 @@ class MLX90640 : public i2c::I2CDevice, public Component, public video::Radiomet
 
   // Statistics, written by the task, read by loop().
   std::atomic<uint32_t> subpages_{0}, frames_{0}, errors_{0}, dropped_{0};
+  std::atomic<uint32_t> settle_dropped_{0};  // sub-pages discarded after a rate change
   std::atomic<uint32_t> read_us_{0}, calc_us_{0}, deliver_us_{0}, wait_us_{0};
   uint32_t last_report_ms_{0};
   uint32_t last_errors_{0};
