@@ -1,6 +1,7 @@
 #include "hti301.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 #include "esphome/core/application.h"
@@ -59,6 +60,7 @@ void HTI301::setup() {
     return;
   }
   this->publish_streaming_(false);
+  this->next_scan_ms_ = millis() + 5000;  // the bus is enumerated from the main loop after boot
 }
 
 static const char *range_name(uint8_t r) { return r == static_cast<uint8_t>(Range::HIGH) ? "high" : "normal"; }
@@ -88,8 +90,12 @@ void HTI301::dump_config() {
   const float h = this->env_humidity_.load();
   log_env("Humidity", std::isnan(h) ? h : h * 100.0f, " %");
   log_env("Distance", this->env_distance_.load(), " m");
+  ESP_LOGCONFIG(TAG, "  USB: %s", this->status_.empty() ? "not checked yet" : this->status_.c_str());
 #ifdef USE_BINARY_SENSOR
   LOG_BINARY_SENSOR("  ", "Streaming", this->streaming_sensor_);
+#endif
+#ifdef USE_TEXT_SENSOR
+  LOG_TEXT_SENSOR("  ", "USB status", this->status_sensor_);
 #endif
 }
 
@@ -98,6 +104,7 @@ void HTI301::loop() {
   this->run_stage_();
   this->run_commands_();
   const uint32_t now = millis();
+  this->scan_bus_(now);
   const uint32_t last = this->last_frame_ms_.load();
   this->publish_streaming_(this->stage_ == Stage::STREAMING && this->out_mode_.load() != UNKNOWN && last != 0 &&
                            now - last < STREAMING_MS);
@@ -117,6 +124,7 @@ void HTI301::on_connected() {
   if (!l.ok) {
     ESP_LOGE(TAG, "Not a usable camera: no uncompressed video format with an isochronous endpoint");
     this->status_set_error(LOG_STR("Unsupported camera"));
+    this->set_status_("Camera found, but its USB descriptors are not usable");
     this->disconnect();
     return;
   }
@@ -128,6 +136,7 @@ void HTI301::on_connected() {
              l.alts[i].endpoint, l.alts[i].transactions, l.alts[i].packet_size, l.alts[i].interval);
   this->status_clear_error();
   this->failures_ = 0;
+  this->set_status_("Camera connected; starting the stream");
   this->goto_stage_(Stage::IDLE_ALT, 0);
 }
 
@@ -139,8 +148,11 @@ void HTI301::on_disconnected() {
   this->ctrl_gen_++;  // a request still in flight is abandoned
   this->ctrl_state_.store(CTRL_IDLE);
   this->publish_streaming_(false);
-  if (was_camera)
+  if (was_camera) {
     ESP_LOGI(TAG, "Camera disconnected");
+    this->set_status_("Camera disconnected");
+    this->next_scan_ms_ = millis() + 2000;
+  }
   usb_host::USBClient::on_disconnected();
 }
 
@@ -173,6 +185,10 @@ void HTI301::fail_stage_(const char *what) {
   this->failures_++;
   const uint32_t delay = std::min<uint32_t>(30000, 1000u << std::min<uint8_t>(this->failures_, 5));
   ESP_LOGW(TAG, "Stream set-up failed (%s); retrying in %u s", what, static_cast<unsigned>(delay / 1000));
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), "Stream set-up failed (%s); retrying in %u s", what,
+                static_cast<unsigned>(delay / 1000));
+  this->set_status_(buf);
   this->status_set_warning();
   this->stop_stream_();
   this->goto_stage_(Stage::BACKOFF, delay);
@@ -195,6 +211,7 @@ void HTI301::run_stage_() {
         }
         this->restarts_++;
         this->status_set_warning();
+        this->set_status_(dead ? "USB transfers ended; restarting the stream" : "No frames; restarting the stream");
         this->stop_stream_();
         this->goto_stage_(Stage::IDLE_ALT, DELAY_BEFORE_RESTART);
       }
@@ -209,6 +226,7 @@ void HTI301::run_stage_() {
         return;
       if (this->start_transfers_()) {
         this->stage_ = Stage::STREAMING;
+        this->set_status_("Streaming");
         this->failures_ = 0;
         this->status_clear_warning();
       } else {
@@ -227,6 +245,9 @@ void HTI301::run_stage_() {
     if (!this->ctrl_slow_logged_ && now - this->ctrl_sent_ms_ > 5000) {
       ESP_LOGW(TAG, "The camera has not answered a control request for 5 s (%s)", stage_name_(this->stage_));
       this->ctrl_slow_logged_ = true;
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "No answer from the camera (%s)", stage_name_(this->stage_));
+      this->set_status_(buf);
     }
     return;
   }
@@ -722,6 +743,167 @@ void HTI301::run_commands_() {
   } else if (this->calibrate_want_) {
     this->send_command_(Cmd::CALIBRATE, 0, CMD_CALIBRATE);
   }
+}
+
+// ---------------------------------------------------------------- bus diagnosis
+
+static const char *speed_name(usb_speed_t s) {
+  switch (s) {
+    case USB_SPEED_LOW:
+      return "low speed";
+    case USB_SPEED_FULL:
+      return "full speed";
+    case USB_SPEED_HIGH:
+      return "high speed";
+    default:
+      return "unknown speed";
+  }
+}
+
+void HTI301::set_status_(const std::string &s) {
+  if (s == this->status_)
+    return;
+  this->status_ = s;
+  ESP_LOGI(TAG, "USB: %s", s.c_str());
+#ifdef USE_TEXT_SENSOR
+  if (this->status_sensor_ != nullptr)
+    this->status_sensor_->publish_state(s);
+#endif
+}
+
+void HTI301::diag_done_(usb_transfer_t *t) {
+  auto *self = static_cast<HTI301 *>(t->context);
+  self->diag_busy_.store(false);
+  xSemaphoreGive(self->diag_sem_);
+}
+
+// One control request to `dev`, waited for (at most 200 ms). Returns the
+// number of data bytes received, or -1.
+int HTI301::diag_request_(usb_device_handle_t dev, uint8_t type, uint8_t request, uint16_t value, uint16_t index,
+                          uint16_t length, uint8_t *out) {
+  static constexpr size_t BUF = 64;
+  if (length > BUF - sizeof(usb_setup_packet_t) || this->diag_busy_.load())
+    return -1;
+  if (this->diag_xfer_ == nullptr) {
+    if (usb_host_transfer_alloc(BUF, 0, &this->diag_xfer_) != ESP_OK)
+      return -1;
+    this->diag_sem_ = xSemaphoreCreateBinary();
+  }
+  usb_transfer_t *t = this->diag_xfer_;
+  auto *setup = reinterpret_cast<usb_setup_packet_t *>(t->data_buffer);
+  setup->bmRequestType = type;
+  setup->bRequest = request;
+  setup->wValue = value;
+  setup->wIndex = index;
+  setup->wLength = length;
+  t->num_bytes = static_cast<int>(sizeof(usb_setup_packet_t) + length);
+  t->device_handle = dev;
+  t->bEndpointAddress = 0;
+  t->callback = HTI301::diag_done_;
+  t->context = this;
+  xSemaphoreTake(this->diag_sem_, 0);
+  this->diag_busy_.store(true);
+  if (usb_host_transfer_submit_control(this->handle_, t) != ESP_OK) {
+    this->diag_busy_.store(false);
+    return -1;
+  }
+  if (xSemaphoreTake(this->diag_sem_, pdMS_TO_TICKS(200)) != pdTRUE)
+    return -1;  // still in flight: diag_busy_ stays set until it completes
+  if (t->status != USB_TRANSFER_STATUS_COMPLETED)
+    return -1;
+  const int n = t->actual_num_bytes - static_cast<int>(sizeof(usb_setup_packet_t));
+  if (n < 0)
+    return -1;
+  std::memcpy(out, t->data_buffer + sizeof(usb_setup_packet_t), static_cast<size_t>(n));
+  return n;
+}
+
+// " (port 1: empty, port 2: high-speed device, ...)" from the hub's own port status.
+std::string HTI301::describe_hub_(usb_device_handle_t dev) {
+  static constexpr uint8_t HUB_IN = 0xA0, PORT_IN = 0xA3, GET_STATUS = 0x00, GET_DESCRIPTOR = 0x06;
+  uint8_t desc[16];
+  int ports = 4;
+  if (this->diag_request_(dev, HUB_IN, GET_DESCRIPTOR, 0x29 << 8, 0, sizeof(desc), desc) >= 3)
+    ports = std::min<int>(desc[2], 8);
+  std::string out = " (";
+  for (int p = 1; p <= ports; p++) {
+    uint8_t st[4];
+    char buf[64];
+    if (this->diag_request_(dev, PORT_IN, GET_STATUS, 0, static_cast<uint16_t>(p), 4, st) != 4) {
+      std::snprintf(buf, sizeof(buf), "%sport %d: no answer", p > 1 ? ", " : "", p);
+    } else {
+      const uint16_t ps = static_cast<uint16_t>(st[0] | (st[1] << 8));
+      const char *what;
+      if (!(ps & 0x0100)) {
+        what = "unpowered";
+      } else if (!(ps & 0x0001)) {
+        what = "empty";
+      } else {
+        what = (ps & 0x0400) ? "high-speed device" : (ps & 0x0200) ? "low-speed device" : "full-speed device";
+      }
+      std::snprintf(buf, sizeof(buf), "%sport %d: %s%s%s", p > 1 ? ", " : "", p, what,
+                    (ps & 0x0001) && !(ps & 0x0002) ? ", not enabled" : "", (ps & 0x0008) ? ", over-current" : "");
+    }
+    out += buf;
+  }
+  out += ")";
+  return out;
+}
+
+// While no camera is connected: list what the host has enumerated, with the
+// state of every hub port, and pick up the camera if it is there but its
+// connection event was missed.
+void HTI301::scan_bus_(uint32_t now) {
+  if (this->state_ != usb_host::USB_CLIENT_INIT || this->stage_ != Stage::IDLE ||
+      static_cast<int32_t>(now - this->next_scan_ms_) < 0)
+    return;
+  this->next_scan_ms_ = now + 10000;
+  if (this->diag_busy_.load())
+    return;  // an earlier request has not come back yet
+  if (this->diag_dev_ != nullptr) {
+    usb_host_device_close(this->handle_, this->diag_dev_);
+    this->diag_dev_ = nullptr;
+  }
+  uint8_t addrs[16];
+  int count = 0;
+  if (usb_host_device_addr_list_fill(sizeof(addrs), addrs, &count) != ESP_OK)
+    return;
+  std::string devices;
+  for (int i = 0; i < count; i++) {
+    usb_device_handle_t dev;
+    if (usb_host_device_open(this->handle_, addrs[i], &dev) != ESP_OK)
+      continue;
+    const usb_device_desc_t *desc;
+    usb_device_info_t info;
+    if (usb_host_get_device_descriptor(dev, &desc) != ESP_OK || usb_host_device_info(dev, &info) != ESP_OK) {
+      usb_host_device_close(this->handle_, dev);
+      continue;
+    }
+    if (desc->idVendor == this->vid_ && desc->idProduct == this->pid_) {
+      usb_host_device_close(this->handle_, dev);
+      ESP_LOGW(TAG, "Camera is on the bus at address %u but its connection event was missed; connecting", addrs[i]);
+      this->on_opened(addrs[i]);
+      return;
+    }
+    const bool hub = desc->bDeviceClass == USB_CLASS_HUB;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%s%04X:%04X %s%s", devices.empty() ? "" : "; ", desc->idVendor, desc->idProduct,
+                  hub ? "hub, " : "", speed_name(info.speed));
+    devices += buf;
+    if (info.parent.dev_hdl != nullptr) {
+      std::snprintf(buf, sizeof(buf), ", on hub port %u", info.parent.port_num);
+      devices += buf;
+    }
+    if (hub)
+      devices += this->describe_hub_(dev);
+    if (this->diag_busy_.load()) {
+      this->diag_dev_ = dev;  // close it once the request comes back
+      break;
+    }
+    usb_host_device_close(this->handle_, dev);
+  }
+  this->set_status_(devices.empty() ? "No camera; the USB host sees no devices at all"
+                                    : "No camera; USB devices: " + devices);
 }
 
 // ---------------------------------------------------------------- reporting

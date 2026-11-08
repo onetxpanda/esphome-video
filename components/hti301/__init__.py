@@ -5,7 +5,7 @@ A radiometric source (temperatures, in radiometric mode) and an image source
 ESP32-P4 (USB 2.0 high speed)."""
 
 import esphome.codegen as cg
-from esphome.components import binary_sensor, usb_host
+from esphome.components import binary_sensor, text_sensor, usb_host
 from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
 from esphome.components.video_controls import (
     button_control,
@@ -27,7 +27,7 @@ from esphome.const import (
 
 CODEOWNERS = ["@onetxpanda"]
 DEPENDENCIES = ["usb_host", "esp32"]
-AUTO_LOAD = ["video_core", "video_controls", "binary_sensor"]
+AUTO_LOAD = ["video_core", "video_controls", "binary_sensor", "text_sensor"]
 MULTI_CONF = False  # every HTI-301 has the same USB ID
 
 CONF_RANGE = "range"
@@ -40,6 +40,7 @@ CONF_PACKETS_PER_TRANSFER = "packets_per_transfer"
 CONF_CONTROLS = "controls"
 CONF_CALIBRATE = "calibrate"
 CONF_STREAMING = "streaming"
+CONF_USB_STATUS = "usb_status"
 CONF_LOG_TIMING = "log_timing"
 
 VID = 0x1514
@@ -89,6 +90,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_STREAMING): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_RUNNING, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
             ),
+            # While no camera is connected: the USB devices the host sees and
+            # the state of every hub port; then the stream's state.
+            cv.Optional(CONF_USB_STATUS): text_sensor.text_sensor_schema(
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC, icon="mdi:usb"
+            ),
             cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
         }
     ),
@@ -119,6 +125,9 @@ async def to_code(config):
     if CONF_STREAMING in config:
         sens = await binary_sensor.new_binary_sensor(config[CONF_STREAMING])
         cg.add(var.set_streaming_sensor(sens))
+    if CONF_USB_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_USB_STATUS])
+        cg.add(var.set_status_sensor(sens))
 
     controls = config[CONF_CONTROLS]
     if CONF_MODE in controls:

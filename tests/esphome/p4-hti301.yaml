@@ -75,6 +75,8 @@ hti301:
       name: "HTI Calibrate"
   streaming:
     name: "HTI Streaming"
+  usb_status:
+    name: "HTI USB"
 
 radiometric:
   - id: hti_rad
