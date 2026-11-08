@@ -219,7 +219,7 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
 
   // Statistics (any thread writes, main loop reads and resets).
   std::atomic<uint32_t> frames_{0}, incomplete_{0}, settled_{0}, replaced_{0}, packets_lost_{0},
-      transfer_errors_{0}, no_buffer_{0}, bad_calibration_{0}, process_us_{0}, processed_{0};
+      transfer_errors_{0}, no_buffer_{0}, bad_calibration_{0}, process_us_{0}, processed_{0}, convert_us_{0};
   // Bus diagnosis: one control transfer of our own, waited for on the main loop.
   usb_transfer_t *diag_xfer_{nullptr};
   SemaphoreHandle_t diag_sem_{nullptr};

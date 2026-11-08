@@ -1,0 +1,20 @@
+esphome:
+  name: invalid-test
+esp32:
+  variant: esp32p4
+  framework:
+    type: esp-idf
+external_components:
+  - source:
+      type: local
+      path: ../../../components
+    components: [video_core, video_test_pattern, video_switch]
+logger:
+video_test_pattern:
+  id: pattern
+video_switch:
+  sources:
+    - name: "A"
+      source: pattern
+    - name: "B"
+      source: [pattern]

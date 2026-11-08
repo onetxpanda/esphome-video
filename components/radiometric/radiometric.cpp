@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -13,7 +14,7 @@ static constexpr size_t POOL_FRAMES = 3;
 
 void Radiometric::setup() {
   std::lock_guard<std::mutex> lock(this->mutex_);
-  this->processor_.set_options(this->options_);
+  this->options_changed_ = true;  // applied by the source's task with the first frame
 }
 
 void Radiometric::dump_config() {
@@ -35,19 +36,19 @@ void Radiometric::set_temporal_frames(float n) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   const long v = std::lround(n);
   this->options_.temporal_frames = static_cast<uint8_t>(v < 1 ? 1 : (v > MAX_TEMPORAL ? MAX_TEMPORAL : v));
-  this->processor_.set_options(this->options_);
+  this->options_changed_ = true;
 }
 
 void Radiometric::set_median_filter(bool v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->options_.median_filter = v;
-  this->processor_.set_options(this->options_);
+  this->options_changed_ = true;
 }
 
 void Radiometric::set_outlier_level(float v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->options_.outlier_level = v;
-  this->processor_.set_options(this->options_);
+  this->options_changed_ = true;
 }
 
 bool Radiometric::wants_frames() const { return this->has_sensors_() || this->sinks_.any_wants(); }
@@ -73,17 +74,26 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
   out.timestamp_ms = in.timestamp_ms;
   out.sequence = in.sequence;
 
-  Stats st;
   {
     std::lock_guard<std::mutex> lock(this->mutex_);
-    if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
-      if (!this->memory_error_logged_) {
-        ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);
-        this->memory_error_logged_ = true;
-      }
-      return;
+    if (this->options_changed_) {
+      this->processor_.set_options(this->options_);
+      this->options_changed_ = false;
     }
-    st = this->processor_.stats();
+  }
+  const uint32_t t0 = micros();
+  if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
+    if (!this->memory_error_logged_) {
+      ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);
+      this->memory_error_logged_ = true;
+    }
+    return;
+  }
+  this->process_us_ += micros() - t0;
+  this->processed_++;
+  const Stats st = this->processor_.stats();
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
     this->latest_ = st;
     this->latest_new_ = true;
   }
@@ -101,6 +111,17 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
 }
 
 void Radiometric::update() {
+  if (this->log_timing_) {
+    const uint32_t now = millis();
+    if (this->last_timing_ms_ == 0) {
+      this->last_timing_ms_ = now;
+    } else if (now - this->last_timing_ms_ >= 10000) {
+      const float s = (now - this->last_timing_ms_) / 1000.0f;
+      this->last_timing_ms_ = now;
+      const uint32_t us = this->process_us_.exchange(0), n = this->processed_.exchange(0);
+      ESP_LOGI(TAG, "Over %.1f s: %.2f frames/s processed, %.2f ms per frame", s, n / s, n ? us / 1000.0f / n : 0.0f);
+    }
+  }
   Stats st;
   {
     std::lock_guard<std::mutex> lock(this->mutex_);

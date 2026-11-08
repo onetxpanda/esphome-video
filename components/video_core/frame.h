@@ -233,6 +233,9 @@ class ImageSink {
   // True for a sink that draws into the frames it receives (an overlay). It
   // must then be its source's only sink, so no other sink sees a frame change.
   virtual bool modifies_frames() const { return false; }
+  // The source now shows different content (a switch chose another camera):
+  // an encoder starts afresh with a keyframe.
+  virtual void on_source_change() {}
 };
 
 class ImageSource {
@@ -255,6 +258,10 @@ template<typename Sink> class SinkList {
     for (auto *s : this->sinks_)
       if (s->wants_frames())
         call(s, f);
+  }
+  template<typename Fn> void each(Fn fn) const {
+    for (auto *s : this->sinks_)
+      fn(s);
   }
   bool empty() const { return this->sinks_.empty(); }
   size_t size() const { return this->sinks_.size(); }

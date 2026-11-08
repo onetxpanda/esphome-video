@@ -4,8 +4,9 @@
 #   hti301 (radiometric) -> radiometric -> isp -> overlay -> h264_encoder -> rtsp_server
 #   hti301 (processed)  ----------------------------------/
 #   mlx90640 ------------> radiometric -> isp -> overlay -/
-# The encoder's select switches between them; the HTI-301's mode select
-# decides which of its two outputs produces frames.
+# A video_switch chooses what both the encoder and the camera entity get; its
+# "HTI-301" entry holds both of the camera's outputs, and the HTI-301's mode
+# select decides which of them produces frames.
 esphome:
   name: p4-hti301
 
@@ -22,7 +23,7 @@ external_components:
   - source:
       type: local
       path: ../../components
-    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, h264_encoder, rtsp_server]
+    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, h264_encoder, rtsp_server]
 
 logger:
 api:
@@ -83,6 +84,7 @@ hti301:
 radiometric:
   - id: hti_rad
     source: hti
+    log_timing: true
     min:
       name: "HTI Min"
     max:
@@ -116,18 +118,23 @@ overlay:
   - id: mlx_overlay
     source: mlx_isp
 
+video_switch:
+  id: stream_switch
+  sources:
+    - name: "MLX90640"
+      source: mlx_overlay
+    - name: "HTI-301"
+      source: [hti_overlay, hti]
+  select:
+    name: "Stream Source"
+
 video_camera:
-  name: "HTI Camera"
-  source: hti_overlay
+  name: "Camera"
+  source: stream_switch
 
 h264_encoder:
   id: hti_h264
-  source: [mlx_overlay, hti_overlay, hti]
-
-select:
-  - platform: h264_encoder
-    name: "HTI Stream Source"
-    options: ["MLX90640", "HTI-301", "HTI-301 camera image"]
+  source: stream_switch
 
 rtsp_server:
   encoder: hti_h264

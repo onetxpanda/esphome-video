@@ -16,6 +16,7 @@ encoders; there is no software encoding.
 | `rtsp_server` | Serves the encoder's output over RTSP (RTP over TCP). |
 | `video_camera` | ESPHome camera entity (Home Assistant, web server), JPEG from the P4's hardware encoder. |
 | `video_test_pattern` | Synthetic image source for checking encoders and streams. |
+| `video_switch` | Chooses which of several image sources reaches the consumers after it (encoder, camera), with a select entity. |
 | `video_core`, `video_controls` | Shared frame types and runtime option entities; loaded automatically. |
 
 ## Usage
@@ -73,6 +74,32 @@ rtsp_server:
 
 `tests/esphome/p4-thermal-rtsp.yaml` is a complete configuration with every
 option entity.
+
+### Several cameras
+
+A `video_switch` gives the encoder and the camera entity the same choice of
+source, with one select. An entry may list several sources: frames from any
+of them pass while it is chosen.
+
+```yaml
+video_switch:
+  id: stream_switch
+  sources:
+    - name: "MLX90640"
+      source: thermal_marked
+    - name: "HTI-301"
+      source: [hti_marked, hti_camera]   # radiometric chain, or the camera's own image
+  select:
+    name: "Stream Source"
+
+video_camera:
+  name: "Thermal Camera"
+  source: stream_switch
+
+h264_encoder:
+  id: encoder
+  source: stream_switch
+```
 
 ### HTI-301
 
@@ -140,9 +167,11 @@ a YAML list, for example one chain per camera.
 - **rtsp_server**: `port`, `path`, `session_name`, `max_clients`, `buffer_size`.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
+- **video_switch**: `sources` (each a `name` and one or more `source`s),
+  `select` (the entity choosing the entry; restores its last value).
 
 Several stages can be marked `log_timing: true` (`mlx90640`, `hti301`,
-`isp`). They then log their per-stage times every 10 s.
+`radiometric`, `isp`). They then log their per-stage times every 10 s.
 
 ## How it works
 

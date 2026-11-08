@@ -113,6 +113,7 @@ void H264Encoder::loop() {
 
 void SourceInput::on_image_frame(const video::ImageFrame &frame) { this->encoder_->handle_frame(this->index_, frame); }
 bool SourceInput::wants_frames() const { return this->encoder_->source_wanted(this->index_); }
+void SourceInput::on_source_change() { this->encoder_->source_changed(this->index_); }
 
 bool H264Encoder::consumers_want_frames_() const {
   if (this->is_failed())
@@ -129,8 +130,14 @@ void H264Encoder::set_active_source(uint8_t index) {
     return;
   ESP_LOGI(TAG, "Source: %s -> %s", this->source_names_[this->active_source_], this->source_names_[index]);
   this->active_source_ = index;
-  // Start the new source's picture cleanly, measure its rate afresh, and
-  // report its problems afresh.
+  this->source_changed(index);
+}
+
+void H264Encoder::source_changed(uint8_t index) {
+  if (index != this->active_source_)
+    return;
+  // Start the new picture cleanly, measure its rate afresh, and report its
+  // problems afresh.
   this->keyframe_requested_ = true;
   this->interval_x16_ = 0;
   this->format_error_logged_ = false;
