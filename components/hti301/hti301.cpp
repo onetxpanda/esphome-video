@@ -5,6 +5,10 @@
 #include <cstring>
 
 #include "esphome/core/application.h"
+#if __has_include("hal/usb_dwc_ll.h")
+#include "hal/usb_dwc_ll.h"
+#define HTI301_HAVE_DWC_LL
+#endif
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -104,6 +108,12 @@ void HTI301::loop() {
   this->run_stage_();
   this->run_commands_();
   const uint32_t now = millis();
+  if (this->usb_power_on_ms_ != 0 && static_cast<int32_t>(now - this->usb_power_on_ms_) >= 0) {
+    this->usb_power_on_ms_ = 0;
+    const esp_err_t err = usb_host_lib_set_root_port_power(true);
+    ESP_LOGI(TAG, "USB port powered on again: %s", esp_err_to_name(err));
+    this->next_scan_ms_ = now + 3000;
+  }
   this->scan_bus_(now);
   const uint32_t last = this->last_frame_ms_.load();
   this->publish_streaming_(this->stage_ == Stage::STREAMING && this->out_mode_.load() != UNKNOWN && last != 0 &&
@@ -662,6 +672,17 @@ void HTI301::calibrate() {
   this->calibrate_want_ = true;
 }
 
+void HTI301::restart_usb() {
+  if (this->usb_power_on_ms_ != 0)
+    return;
+  const esp_err_t err = usb_host_lib_set_root_port_power(false);
+  ESP_LOGI(TAG, "USB port powered off for a restart: %s", esp_err_to_name(err));
+  if (err != ESP_OK)
+    return;
+  this->set_status_("Restarting the USB port");
+  this->usb_power_on_ms_ = millis() + 500;
+}
+
 bool HTI301::send_command_(Cmd kind, uint8_t value, uint16_t code) {
   this->cmd_kind_ = kind;
   this->cmd_value_ = value;
@@ -902,8 +923,38 @@ void HTI301::scan_bus_(uint32_t now) {
     }
     usb_host_device_close(this->handle_, dev);
   }
-  this->set_status_(devices.empty() ? "No camera; the USB host sees no devices at all"
-                                    : "No camera; USB devices: " + devices);
+  if (!devices.empty()) {
+    this->set_status_("No camera; USB devices: " + devices);
+    return;
+  }
+#ifdef HTI301_HAVE_DWC_LL
+  // Nothing enumerated: is anything electrically attached to the host port?
+  // (The high-speed controller, which usb_host uses on the P4.)
+  usb_dwc_dev_t *hw = USB_DWC_LL_GET_HW(0);
+  const bool attached = usb_dwc_ll_hprt_get_conn_status(hw);
+  const bool enabled = usb_dwc_ll_hprt_get_port_en(hw);
+  const bool powered = hw->hprt_reg.prtpwr;
+  const bool overcurrent = usb_dwc_ll_hprt_get_port_overcur(hw);
+  const unsigned lines = usb_dwc_ll_hprt_get_pwr_line_status(hw);
+  const usb_dwc_speed_t spd = usb_dwc_ll_hprt_get_speed(hw);
+  char buf[200];
+  if (!attached) {
+    std::snprintf(buf, sizeof(buf),
+                  "No camera; nothing is attached to the P4's USB port (port %s%s, D+/D- lines %u%u)",
+                  powered ? "powered" : "unpowered", overcurrent ? ", over-current" : "", (lines >> 0) & 1,
+                  (lines >> 1) & 1);
+  } else {
+    std::snprintf(buf, sizeof(buf),
+                  "No camera; a %s device is attached to the P4's USB port but was not enumerated (port %s%s)",
+                  spd == USB_DWC_SPEED_HIGH   ? "high-speed"
+                  : spd == USB_DWC_SPEED_FULL ? "full-speed"
+                                              : "low-speed",
+                  enabled ? "enabled" : "disabled", overcurrent ? ", over-current" : "");
+  }
+  this->set_status_(buf);
+#else
+  this->set_status_("No camera; the USB host sees no devices at all");
+#endif
 }
 
 // ---------------------------------------------------------------- reporting
