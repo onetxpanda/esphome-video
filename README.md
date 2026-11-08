@@ -16,6 +16,7 @@ encoders; there is no software encoding.
 | `rtsp_server` | Serves the encoder's output over RTSP (RTP over TCP). |
 | `video_camera` | ESPHome camera entity (Home Assistant, web server), JPEG from the P4's hardware encoder. |
 | `video_test_pattern` | Synthetic image source for checking encoders and streams. |
+| `video_palette` | One select entity choosing the palette of several ISPs and cameras at once. |
 | `video_switch` | Chooses which of several image sources reaches the consumers after it (encoder, camera), with a select entity. |
 | `video_core`, `video_controls` | Shared frame types and runtime option entities; loaded automatically. |
 
@@ -156,7 +157,8 @@ a YAML list, for example one chain per camera.
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
   `temporal_frames`, `median_filter`, `outlier_level`.
 - **isp**: `scale` (1–20), `format` (RGB565_LE, RGB565_BE, RGB888, GRAY8),
-  `palette` (iron, gray), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
+  `palette` (white_hot, black_hot, ironbow, lava, rainbow, iron_gray,
+  red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear), `scaler` (cpu, ppa). Controls: `range_min`,
   `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`.
 - **overlay**: `marks` (min, max, center), `hold` (how often mark positions
@@ -167,6 +169,9 @@ a YAML list, for example one chain per camera.
 - **rtsp_server**: `port`, `path`, `session_name`, `max_clients`, `buffer_size`.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
+- **video_palette**: `targets` (ISPs, and cameras that colour their own image
+  such as the HTI-301), `palette` (initial). The select restores its last
+  value.
 - **video_switch**: `sources` (each a `name` and one or more `source`s),
   `select` (the entity choosing the entry; restores its last value).
 
