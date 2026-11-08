@@ -18,7 +18,9 @@ static constexpr size_t POOL_FRAMES = 3;
 // being measured when the rate changes comes out with nonsense temperatures
 // across the whole frame (seen as single readings of 150-500 F); two
 // sub-pages is one full frame measured entirely with the new setting.
-static constexpr uint8_t SETTLE_SUBPAGES = 2;
+static constexpr uint8_t SETTLE_SUBPAGES = 4;
+// DIAGNOSTIC (temporary): log this many sub-pages after each change.
+static constexpr uint8_t DIAG_SUBPAGES = 8;
 
 static const char *extract_error(int status) {
   switch (status) {
@@ -137,6 +139,8 @@ void MLX90640::task_loop_() {
   uint8_t rate = this->refresh_rate_;
   uint8_t mode = this->frame_mode_;
   uint8_t settle = SETTLE_SUBPAGES;
+  uint8_t diag = DIAG_SUBPAGES;
+  uint32_t change_ms = millis();
   for (;;) {
     // Settings changed from the main loop.
     if (this->refresh_rate_ != rate) {
@@ -145,6 +149,9 @@ void MLX90640::task_loop_() {
         this->errors_++;
       this->assembler_.set_mode(this->get_frame_mode());  // don't merge across rates
       settle = SETTLE_SUBPAGES;
+      diag = DIAG_SUBPAGES;
+      change_ms = millis();
+      ESP_LOGI(TAG, "DIAG rate -> register %u", rate);
     }
     if (this->frame_mode_ != mode) {
       mode = this->frame_mode_;
@@ -177,17 +184,32 @@ void MLX90640::task_loop_() {
     uint32_t t2 = micros();
     this->read_us_ += t2 - t1;
     this->subpages_++;
-    if (settle > 0) {
-      settle--;
-      this->settle_dropped_++;
-      continue;
-    }
 
     const float ta = MLX90640_GetTa(this->raw_, &this->params_);
     MLX90640_CalculateTo(this->raw_, &this->params_, this->emissivity_, ta - TA_SHIFT, this->temps_);
     MLX90640_BadPixelsCorrection(this->params_.brokenPixels, this->temps_, this->chess_, &this->params_);
     MLX90640_BadPixelsCorrection(this->params_.outlierPixels, this->temps_, this->chess_, &this->params_);
     const int subpage = MLX90640_GetSubPageNumber(this->raw_);
+    if (diag > 0) {
+      // Max over this sub-page's own pixels only
+      float mx = -1000, mn = 1000;
+      for (int r = 0; r < SENSOR_ROWS; r++)
+        for (int c = 0; c < SENSOR_COLS; c++)
+          if ((this->chess_ ? ((r + c) & 1) : (r & 1)) == subpage) {
+            const float v = this->temps_[r * SENSOR_COLS + c];
+            mx = v > mx ? v : mx;
+            mn = v < mn ? v : mn;
+          }
+      ESP_LOGI(TAG, "DIAG +%ums #%u sp=%d ctrl=0x%04X ta=%.2f vdd=%.3f min=%.1f max=%.1f %s",
+               static_cast<unsigned>(millis() - change_ms), static_cast<unsigned>(DIAG_SUBPAGES - diag), subpage,
+               this->raw_[832], ta, MLX90640_GetVdd(this->raw_, &this->params_), mn, mx, settle > 0 ? "discard" : "use");
+      diag--;
+    }
+    if (settle > 0) {
+      settle--;
+      this->settle_dropped_++;
+      continue;
+    }
     const bool frame = this->assembler_.add(this->temps_, subpage, this->chess_ == 1);
     uint32_t t3 = micros();
     this->calc_us_ += t3 - t2;
