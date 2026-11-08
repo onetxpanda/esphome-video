@@ -66,12 +66,15 @@ class RtspServerCore {
   uint32_t dropped_frames() const { return this->dropped_frames_.load(); }
 
  private:
+  // Headroom over max_client_buffer in a client's reserved send buffer: a
+  // frame's packet overhead estimate is not exact, and responses go there too.
+  static constexpr size_t SEND_SLACK = 64 * 1024;
   enum class State : uint8_t { INIT, READY, PLAYING };
   struct Client {
     int fd{-1};
     std::string peer;
     std::string in;
-    std::vector<uint8_t> out;
+    SendBuffer out;  // reserved when the client connects; never grows past it
     size_t out_off{0};
     State state{State::INIT};
     std::string session;
@@ -91,6 +94,7 @@ class RtspServerCore {
   void read_(Client &c);
   void handle_request_(Client &c, const RtspRequest &req);
   void send_response_(Client &c, const std::string &response);
+  void make_room_(Client &c, size_t bytes);
   void flush_(Client &c);
   void set_state_(Client &c, State s);
   void close_client_(size_t index);

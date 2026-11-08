@@ -1,5 +1,9 @@
 #include "rtsp_core.h"
 
+#ifdef USE_ESP32
+#include <esp_heap_caps.h>
+#endif
+
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +11,23 @@
 
 namespace esphome {
 namespace rtsp_server {
+
+void *send_buffer_alloc(size_t bytes) {
+#ifdef USE_ESP32
+  void *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+  return p != nullptr ? p : heap_caps_malloc(bytes, MALLOC_CAP_DEFAULT);
+#else
+  return std::malloc(bytes);
+#endif
+}
+
+void send_buffer_free(void *p) {
+#ifdef USE_ESP32
+  heap_caps_free(p);
+#else
+  std::free(p);
+#endif
+}
 
 static std::string to_lower(std::string s) {
   for (auto &c : s)
@@ -324,7 +345,7 @@ std::string build_sdp(const std::string &session_name, const std::string &server
   return sdp;
 }
 
-static void put_rtp_header(std::vector<uint8_t> &out, uint8_t channel, size_t payload_len, bool marker,
+static void put_rtp_header(SendBuffer &out, uint8_t channel, size_t payload_len, bool marker,
                            uint32_t ts, RtpState &state) {
   size_t rtp_len = 12 + payload_len;
   out.push_back('$');
@@ -346,7 +367,7 @@ static void put_rtp_header(std::vector<uint8_t> &out, uint8_t channel, size_t pa
   out.push_back(static_cast<uint8_t>(state.ssrc));
 }
 
-size_t append_access_unit(std::vector<uint8_t> &out, uint8_t channel, const std::vector<NalUnit> &nals,
+size_t append_access_unit(SendBuffer &out, uint8_t channel, const std::vector<NalUnit> &nals,
                           uint32_t rtp_timestamp, RtpState &state, size_t max_payload) {
   // The interleaved length field is 16 bits; keep every packet well inside it.
   if (max_payload < 16)

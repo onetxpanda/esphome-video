@@ -129,7 +129,7 @@ struct Packet {
   std::vector<uint8_t> payload;
 };
 
-static std::vector<Packet> unframe(const std::vector<uint8_t> &out, bool &ok) {
+static std::vector<Packet> unframe(const SendBuffer &out, bool &ok) {
   std::vector<Packet> p;
   ok = true;
   size_t i = 0;
@@ -173,7 +173,7 @@ static void test_packetize() {
   RtpState st;
   st.seq = 65534;  // exercises wrap-around
   st.ssrc = 0xDEADBEEF;
-  std::vector<uint8_t> out;
+  SendBuffer out;
   size_t n = append_access_unit(out, 2, nals, 123456, st, 1400);
   bool ok = false;
   auto pk = unframe(out, ok);
