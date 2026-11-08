@@ -23,7 +23,7 @@ external_components:
   - source:
       type: local
       path: ../../components
-    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, h264_encoder, rtsp_server]
+    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, video_palette, h264_encoder, rtsp_server]
 
 logger:
 api:
@@ -117,6 +117,11 @@ overlay:
     unit: C
   - id: mlx_overlay
     source: mlx_isp
+
+video_palette:
+  name: "Palette"
+  palette: lava
+  targets: [mlx_isp, hti_isp, hti]
 
 video_switch:
   id: stream_switch

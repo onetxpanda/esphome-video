@@ -41,9 +41,7 @@ enum Command : uint16_t {
 // 0xFF01 and 0x80FA switch the camera to a firmware-update mode (it
 // re-enumerates as 1514:FFFF); 0x80FE/0x80FF write its flash. Never sent.
 
-static constexpr const char *PALETTE_NAMES[] = {"White hot", "Black hot", "Ironbow",  "Lava",
-                                                "Rainbow",   "Iron gray", "Red hot", "Rainbow 2"};
-static constexpr uint8_t PALETTE_COUNT = 8;
+// Palettes (CMD_PALETTE_FIRST + index) are in the order of video::PALETTE_NAMES.
 
 // ---------------------------------------------------------------- descriptors
 

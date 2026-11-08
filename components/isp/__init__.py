@@ -13,7 +13,13 @@ from esphome.components.video_controls import (
     select_control,
     switch_control,
 )
-from esphome.components.video_core import ImageSource, RadiometricSink, RadiometricSource
+from esphome.components.video_core import (
+    PALETTE_KEYS,
+    ImageSource,
+    PaletteTarget,
+    RadiometricSink,
+    RadiometricSource,
+)
 import esphome.config_validation as cv
 from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE
 
@@ -34,14 +40,15 @@ CONF_CONTROLS = "controls"
 CONF_LOG_TIMING = "log_timing"
 
 FORMATS = {"RGB565_LE": "RGB565_LE", "RGB565_BE": "RGB565_BE", "RGB888": "RGB888", "GRAY8": "GRAY8"}
-PALETTES = ["iron", "gray"]
+# Older names, kept working.
+PALETTE_ALIASES = {"iron": "ironbow", "gray": "white_hot", "grey": "white_hot"}
 UPSCALES = ["nearest", "bilinear"]
 UPSCALE_LABELS = ["Nearest", "Bilinear"]
 SCALERS = ["cpu", "ppa"]
 SCALER_LABELS = ["CPU", "PPA"]
 
 isp_ns = cg.esphome_ns.namespace("isp")
-Isp = isp_ns.class_("Isp", cg.Component, RadiometricSink, ImageSource)
+Isp = isp_ns.class_("Isp", cg.Component, RadiometricSink, ImageSource, PaletteTarget)
 Palette = isp_ns.enum("Palette", is_class=True)
 Upscale = isp_ns.enum("Upscale", is_class=True)
 Scaler = isp_ns.enum("Scaler", is_class=True)
@@ -54,6 +61,15 @@ def _validate(config):
     return config
 
 
+
+def _palette(value):
+    value = cv.string_strict(value).lower().replace(" ", "_")
+    value = PALETTE_ALIASES.get(value, value)
+    if value not in PALETTE_KEYS:
+        raise cv.Invalid(f"palette must be one of {', '.join(PALETTE_KEYS)}")
+    return value
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -63,7 +79,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SCALE, default=1): cv.int_range(min=1, max=20),
             # RGB565_LE is what the ESP32-P4's H.264 encoder and PPA take.
             cv.Optional(CONF_FORMAT, default="RGB565_LE"): cv.enum(FORMATS, upper=True),
-            cv.Optional(CONF_PALETTE, default="iron"): cv.one_of(*PALETTES, lower=True),
+            cv.Optional(CONF_PALETTE, default="ironbow"): _palette,
             # Values mapped to the first and last palette colour.
             cv.Optional(CONF_RANGE_MIN, default=15.0): cv.float_,
             cv.Optional(CONF_RANGE_MAX, default=40.0): cv.float_,

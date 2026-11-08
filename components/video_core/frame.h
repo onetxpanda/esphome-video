@@ -244,6 +244,20 @@ class ImageSource {
   virtual void add_image_sink(ImageSink *sink) = 0;
 };
 
+// False-colour palettes, in one order for every stage that colours images
+// (an ISP's lookup table, a camera that colours its own image).
+static constexpr uint8_t PALETTE_COUNT = 8;
+static constexpr const char *PALETTE_NAMES[PALETTE_COUNT] = {"White hot", "Black hot", "Ironbow",  "Lava",
+                                                             "Rainbow",   "Iron gray", "Red hot", "Rainbow 2"};
+
+// Something whose palette can be chosen at runtime (main loop). Indices
+// follow PALETTE_NAMES.
+class PaletteTarget {
+ public:
+  virtual ~PaletteTarget() = default;
+  virtual void set_palette_index(uint8_t index) = 0;
+};
+
 // Fan-out helper for sources.
 template<typename Sink> class SinkList {
  public:

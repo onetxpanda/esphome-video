@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "isp_core.h"
+#include "palette.h"
 #include "radiometric_core.h"
 
 using namespace esphome;
@@ -190,7 +191,34 @@ static void test_large_frames() {
   CHECK(c.width() == w && c.height() == h);
 }
 
+// Every palette is defined over the whole range, in the shared order.
+static void test_palettes() {
+  CHECK(isp::PALETTE_COUNT == video::PALETTE_COUNT);
+  auto lum = [](const isp::Rgb &c) { return c.r * 299 + c.g * 587 + c.b * 114; };
+  for (uint8_t i = 0; i < isp::PALETTE_COUNT; i++) {
+    const auto p = isp::make_palette(static_cast<isp::Palette>(i));
+    // The hot end is brighter than the cold end, except for black hot.
+    if (i == static_cast<uint8_t>(isp::Palette::BLACK_HOT)) {
+      CHECK(lum(p[0]) > lum(p[255]));
+    } else {
+      CHECK(lum(p[255]) > lum(p[0]));
+    }
+  }
+  const auto w = isp::make_palette(isp::Palette::WHITE_HOT);
+  CHECK(w[0].r == 0 && w[255].r == 255 && w[128].g == 128 && w[128].b == 128);
+  const auto b = isp::make_palette(isp::Palette::BLACK_HOT);
+  CHECK(b[0].r == 255 && b[255].r == 0);
+  // The irradiance app's ironbow: its stops at 0, 51 (stop 2) and 255.
+  const auto iron = isp::make_palette(isp::Palette::IRONBOW);
+  CHECK(iron[0].r == 0 && iron[0].g == 0 && iron[0].b == 10);
+  CHECK(iron[51].r == 60 && iron[51].g == 0 && iron[51].b == 153);
+  CHECK(iron[255].r == 255 && iron[255].g == 255 && iron[255].b == 246);
+  const auto red = isp::make_palette(isp::Palette::RED_HOT);
+  CHECK(red[100].r == red[100].g && red[255].r == 255 && red[255].g == 0);  // grey, then red at the top
+}
+
 int main() {
+  test_palettes();
   test_radiometric();
   test_isp();
   test_large_frames();

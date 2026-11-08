@@ -87,7 +87,7 @@ void HTI301::dump_config() {
                 "  Mode: %s, range: %s, palette: %s\n"
                 "  Isochronous transfers: %u x %u packets",
                 this->vid_, this->pid_, mode_name(this->mode_want_), range_name(this->range_want_),
-                PALETTE_NAMES[this->palette_want_], this->num_transfers_, this->packets_per_transfer_);
+                video::PALETTE_NAMES[this->palette_want_], this->num_transfers_, this->packets_per_transfer_);
   log_env("Emissivity", this->env_emissivity_.load(), "");
   log_env("Reflected temperature", this->env_reflected_.load(), " C");
   log_env("Ambient temperature", this->env_ambient_.load(), " C");
@@ -713,7 +713,7 @@ void HTI301::command_succeeded_(Cmd kind, uint8_t value) {
       break;
     case Cmd::PALETTE:
       this->palette_set_ = value;
-      ESP_LOGI(TAG, "Camera palette: %s", PALETTE_NAMES[value]);
+      ESP_LOGI(TAG, "Camera palette: %s", video::PALETTE_NAMES[value]);
       break;
     case Cmd::CALIBRATE:
       this->calibrate_want_ = false;

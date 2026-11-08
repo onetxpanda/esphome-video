@@ -45,7 +45,10 @@ namespace hti301 {
 enum class Mode : uint8_t { RADIOMETRIC = 0, PROCESSED = 1 };
 enum class Range : uint8_t { NORMAL = 0, HIGH = 1 };
 
-class HTI301 : public usb_host::USBClient, public video::RadiometricSource, public video::ImageSource {
+class HTI301 : public usb_host::USBClient,
+               public video::RadiometricSource,
+               public video::ImageSource,
+               public video::PaletteTarget {
  public:
   HTI301(uint16_t vid, uint16_t pid) : usb_host::USBClient(vid, pid) {}
   void setup() override;
@@ -58,7 +61,9 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   // Main loop only. Sent to the camera while it streams.
   void set_mode(Mode m) { this->mode_want_ = static_cast<uint8_t>(m); }
   void set_range(Range r) { this->range_want_ = static_cast<uint8_t>(r); }
-  void set_palette(uint8_t p) { this->palette_want_ = p < PALETTE_COUNT ? p : 0; }
+  void set_palette(uint8_t p) { this->palette_want_ = p < video::PALETTE_COUNT ? p : 0; }
+  // PaletteTarget: the camera's own palette (processed mode).
+  void set_palette_index(uint8_t index) override { this->set_palette(index); }
   // Triggers the shutter calibration; ignored while the camera is not streaming.
   void calibrate();
   // Powers the USB host port off and on again: everything on it re-enumerates,

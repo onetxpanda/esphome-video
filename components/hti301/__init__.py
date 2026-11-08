@@ -15,7 +15,13 @@ from esphome.components.video_controls import (
     number_control,
     select_control,
 )
-from esphome.components.video_core import ImageSource, RadiometricSource
+from esphome.components.video_core import (
+    PALETTE_KEYS,
+    PALETTE_LABELS,
+    ImageSource,
+    PaletteTarget,
+    RadiometricSource,
+)
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_DISTANCE,
@@ -51,11 +57,10 @@ MODES = ["radiometric", "processed"]
 MODE_LABELS = ["Radiometric", "Processed"]
 RANGES = ["normal", "high"]
 RANGE_LABELS = ["Normal (-20 to 120 °C)", "High (-20 to 450 °C)"]
-PALETTES = ["white_hot", "black_hot", "ironbow", "lava", "rainbow", "iron_gray", "red_hot", "rainbow_2"]
-PALETTE_LABELS = ["White hot", "Black hot", "Ironbow", "Lava", "Rainbow", "Iron gray", "Red hot", "Rainbow 2"]
+PALETTES = PALETTE_KEYS
 
 hti301_ns = cg.esphome_ns.namespace("hti301")
-HTI301 = hti301_ns.class_("HTI301", usb_host.USBClient, RadiometricSource, ImageSource)
+HTI301 = hti301_ns.class_("HTI301", usb_host.USBClient, RadiometricSource, ImageSource, PaletteTarget)
 Mode = hti301_ns.enum("Mode", is_class=True)
 Range = hti301_ns.enum("Range", is_class=True)
 

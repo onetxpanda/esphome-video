@@ -34,7 +34,6 @@ void Isp::setup() {
     this->mark_failed(LOG_STR("An overlay must be the only consumer of its source; chain other consumers after it"));
     return;
   }
-  this->cpu_.set_palette(make_palette(this->palette_));
 #ifdef USE_ISP_PPA
   ppa_client_config_t cfg{};
   cfg.oper_type = PPA_OPERATION_SRM;
@@ -56,7 +55,7 @@ void Isp::dump_config() {
                 "  Scale: %ux, format: %s, palette: %s\n"
                 "  Range: %.1f .. %.1f\n"
                 "  Mirror: x %s, y %s; upscale: %s; scaler: %s",
-                this->opt_.scale, format_name(this->opt_.format), this->palette_ == Palette::IRON ? "iron" : "grey",
+                this->opt_.scale, format_name(this->opt_.format), video::PALETTE_NAMES[this->palette_.load()],
                 this->opt_.range_min, this->opt_.range_max, YESNO(this->opt_.mirror_x), YESNO(this->opt_.mirror_y),
                 this->opt_.upscale == Upscale::BILINEAR ? "bilinear" : "nearest",
                 this->scaler_ == Scaler::PPA ? "PPA" : "CPU");
@@ -121,6 +120,11 @@ void Isp::task_loop_() {
       this->has_pending_ = false;
       o = this->opt_;
       scaler = this->scaler_;
+    }
+    const uint8_t palette = this->palette_.load();
+    if (palette != this->palette_applied_) {
+      this->cpu_.set_palette(make_palette(static_cast<Palette>(palette)));
+      this->palette_applied_ = palette;
     }
     this->process_(f, o, scaler);
   }

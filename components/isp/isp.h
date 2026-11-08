@@ -27,7 +27,10 @@ namespace isp {
 
 enum class Scaler : uint8_t { CPU = 0, PPA = 1 };
 
-class Isp : public Component, public video::RadiometricSink, public video::ImageSource {
+class Isp : public Component,
+            public video::RadiometricSink,
+            public video::ImageSource,
+            public video::PaletteTarget {
  public:
   float get_setup_priority() const override { return setup_priority::DATA; }
   void setup() override;
@@ -43,7 +46,11 @@ class Isp : public Component, public video::RadiometricSink, public video::Image
   // Configuration (before setup)
   void set_scale(uint8_t s) { this->opt_.scale = s; }
   void set_format(video::ImageFormat f) { this->opt_.format = f; }
-  void set_palette(Palette p) { this->palette_ = p; }
+  void set_palette(Palette p) { this->palette_ = static_cast<uint8_t>(p); }
+  // PaletteTarget (main loop): applied by the ISP task from the next frame.
+  void set_palette_index(uint8_t index) override {
+    this->palette_ = index < PALETTE_COUNT ? index : static_cast<uint8_t>(Palette::IRONBOW);
+  }
   void set_log_timing(bool v) { this->log_timing_ = v; }
 
   // Runtime options; thread-safe.
@@ -63,7 +70,8 @@ class Isp : public Component, public video::RadiometricSink, public video::Image
   std::mutex mutex_;  // guards opt_, scaler_ and pending_
   Options opt_;
   Scaler scaler_{Scaler::CPU};
-  Palette palette_{Palette::IRON};
+  std::atomic<uint8_t> palette_{static_cast<uint8_t>(Palette::IRONBOW)};
+  uint8_t palette_applied_{0xFF};  // ISP task only
   video::RadiometricFrame pending_;
   bool has_pending_{false};
 
