@@ -118,7 +118,9 @@ a YAML list, for example one chain per camera.
   `reflected_temperature`, `ambient_temperature`, `humidity`, `distance`
   (left out: the values stored in the camera). `transfers` and
   `packets_per_transfer` size the USB buffering (default 8 x 16 packets,
-  16 ms). Binary sensor: `streaming` (on while frames arrive). Controls:
+  16 ms). Binary sensor: `streaming` (on while frames arrive). Text sensor:
+  `usb_status` (while no camera is connected, the USB devices the host sees
+  and the state of each hub port; then the stream's state). Controls:
   `mode`, `range`, `palette`, `emissivity`, and a `calibrate` button
   (shutter calibration).
 - **radiometric**: `temporal_frames` (1–8; 1 = off), `median_filter`,
@@ -211,6 +213,10 @@ camera cannot report its mode, so after every stream start the component
 sends the configured mode, range and palette, and passes frames on only
 once the camera has accepted the mode. After a mode or range change it skips
 5 frames. If no complete frame arrives for 3 s, it restarts the stream.
+While no camera is connected, it lists every 10 s the devices the USB host
+has enumerated and asks each hub for the state of its ports (empty, device
+attached, not enabled, over-current). If the camera is on the bus but its
+connection event was missed, it connects to it.
 
 In radiometric mode each pixel is a 14-bit raw value. The metadata rows hold
 the camera's calibration (detector and shutter temperatures, calibration

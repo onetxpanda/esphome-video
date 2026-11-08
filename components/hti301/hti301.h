@@ -19,9 +19,11 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #include "esphome/components/usb_host/usb_host.h"
@@ -29,6 +31,9 @@
 #include "esphome/core/defines.h"
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
 #endif
 
 #include "../video_core/frame.h"
@@ -69,6 +74,10 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   void set_log_timing(bool v) { this->log_timing_ = v; }
 #ifdef USE_BINARY_SENSOR
   void set_streaming_sensor(binary_sensor::BinarySensor *s) { this->streaming_sensor_ = s; }
+#endif
+#ifdef USE_TEXT_SENSOR
+  // What is on the USB bus while no camera is connected, then the stream's state.
+  void set_status_sensor(text_sensor::TextSensor *s) { this->status_sensor_ = s; }
 #endif
 
  protected:
@@ -117,6 +126,14 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   void task_loop_();
   void process_radiometric_(const video::FrameRef &raw, uint32_t ts);
   void process_image_(const video::FrameRef &raw, uint32_t ts);
+
+  // USB bus diagnosis while no camera is connected (main loop).
+  void scan_bus_(uint32_t now);
+  std::string describe_hub_(usb_device_handle_t dev);
+  int diag_request_(usb_device_handle_t dev, uint8_t type, uint8_t request, uint16_t value, uint16_t index,
+                    uint16_t length, uint8_t *out);
+  static void diag_done_(usb_transfer_t *t);
+  void set_status_(const std::string &s);
 
   void report_(uint32_t now);
   void publish_streaming_(bool on);
@@ -200,6 +217,17 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   // Statistics (any thread writes, main loop reads and resets).
   std::atomic<uint32_t> frames_{0}, incomplete_{0}, settled_{0}, replaced_{0}, packets_lost_{0},
       transfer_errors_{0}, no_buffer_{0}, bad_calibration_{0}, process_us_{0}, processed_{0};
+  // Bus diagnosis: one control transfer of our own, waited for on the main loop.
+  usb_transfer_t *diag_xfer_{nullptr};
+  SemaphoreHandle_t diag_sem_{nullptr};
+  std::atomic<bool> diag_busy_{false};
+  usb_device_handle_t diag_dev_{nullptr};  // left open while a timed-out request is still in flight
+  uint32_t next_scan_ms_{0};
+  std::string status_;
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *status_sensor_{nullptr};
+#endif
+
   uint32_t last_report_ms_{0};
   uint32_t restarts_{0};
   bool streaming_published_{false};
