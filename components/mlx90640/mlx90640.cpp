@@ -16,9 +16,10 @@ static constexpr int TA_SHIFT = 8;  // reflected temperature offset for open air
 static constexpr size_t POOL_FRAMES = 3;
 // Sub-pages to throw away after start-up or a refresh-rate change. The one
 // being measured when the rate changes comes out with nonsense temperatures
-// across the whole frame (seen as single readings of 150-500 F); two
-// sub-pages is one full frame measured entirely with the new setting.
-static constexpr uint8_t SETTLE_SUBPAGES = 2;
+// across the whole frame (seen as single readings of 150-500 F). Discarding
+// two was not enough when leaving 64 Hz (one bad frame after 64 -> 8 Hz), so
+// discard four: two full frames.
+static constexpr uint8_t SETTLE_SUBPAGES = 4;
 
 static const char *extract_error(int status) {
   switch (status) {
