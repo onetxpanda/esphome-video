@@ -121,8 +121,9 @@ a YAML list, for example one chain per camera.
   16 ms). Binary sensor: `streaming` (on while frames arrive). Text sensor:
   `usb_status` (while no camera is connected, the USB devices the host sees
   and the state of each hub port; then the stream's state). Controls:
-  `mode`, `range`, `palette`, `emissivity`, and a `calibrate` button
-  (shutter calibration).
+  `mode`, `range`, `palette`, `emissivity`, a `calibrate` button
+  (shutter calibration), and a `restart_usb` button (powers the USB port off
+  and on, so everything on it re-enumerates).
 - **radiometric**: `temporal_frames` (1–8; 1 = off), `median_filter`,
   `outlier_level` (degrees; 0 = off), `update_interval` for the sensors.
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
@@ -215,7 +216,9 @@ once the camera has accepted the mode. After a mode or range change it skips
 5 frames. If no complete frame arrives for 3 s, it restarts the stream.
 While no camera is connected, it lists every 10 s the devices the USB host
 has enumerated and asks each hub for the state of its ports (empty, device
-attached, not enabled, over-current). If the camera is on the bus but its
+attached, not enabled, over-current). With nothing enumerated, it reads
+the host port's own status: whether anything is electrically attached, and
+whether the port was enabled. If the camera is on the bus but its
 connection event was missed, it connects to it.
 
 In radiometric mode each pixel is a 14-bit raw value. The metadata rows hold

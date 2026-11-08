@@ -61,6 +61,9 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   void set_palette(uint8_t p) { this->palette_want_ = p < PALETTE_COUNT ? p : 0; }
   // Triggers the shutter calibration; ignored while the camera is not streaming.
   void calibrate();
+  // Powers the USB host port off and on again: everything on it re-enumerates,
+  // as if unplugged and plugged back in.
+  void restart_usb();
 
   // Scene parameters for radiometric mode; NaN takes the camera's stored value.
   void set_emissivity(float v) { this->env_emissivity_ = v; }
@@ -223,6 +226,7 @@ class HTI301 : public usb_host::USBClient, public video::RadiometricSource, publ
   std::atomic<bool> diag_busy_{false};
   usb_device_handle_t diag_dev_{nullptr};  // left open while a timed-out request is still in flight
   uint32_t next_scan_ms_{0};
+  uint32_t usb_power_on_ms_{0};  // when to power the port back on after restart_usb(); 0 = not pending
   std::string status_;
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *status_sensor_{nullptr};

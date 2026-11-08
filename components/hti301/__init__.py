@@ -39,6 +39,7 @@ CONF_TRANSFERS = "transfers"
 CONF_PACKETS_PER_TRANSFER = "packets_per_transfer"
 CONF_CONTROLS = "controls"
 CONF_CALIBRATE = "calibrate"
+CONF_RESTART_USB = "restart_usb"
 CONF_STREAMING = "streaming"
 CONF_USB_STATUS = "usb_status"
 CONF_LOG_TIMING = "log_timing"
@@ -84,6 +85,8 @@ CONFIG_SCHEMA = cv.All(
                     cv.Optional(CONF_PALETTE): select_control(),
                     cv.Optional(CONF_EMISSIVITY): number_control(),
                     cv.Optional(CONF_CALIBRATE): button_control(),
+                    # Powers the USB port off and on: everything on it re-enumerates.
+                    cv.Optional(CONF_RESTART_USB): button_control(),
                 }
             ),
             # On while frames arrive from the camera.
@@ -146,3 +149,5 @@ async def to_code(config):
         )
     if CONF_CALIBRATE in controls:
         await new_button_control(controls[CONF_CALIBRATE], var, "calibrate")
+    if CONF_RESTART_USB in controls:
+        await new_button_control(controls[CONF_RESTART_USB], var, "restart_usb")

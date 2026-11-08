@@ -73,6 +73,8 @@ hti301:
       name: "HTI Emissivity"
     calibrate:
       name: "HTI Calibrate"
+    restart_usb:
+      name: "HTI USB Restart"
   streaming:
     name: "HTI Streaming"
   usb_status:
