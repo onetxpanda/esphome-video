@@ -18,6 +18,7 @@ encoders; there is no software encoding.
 | `video_test_pattern` | Synthetic image source for checking encoders and streams. |
 | `video_palette` | One select entity choosing the palette of several ISPs and cameras at once. |
 | `video_switch` | Chooses which of several image sources reaches the consumers after it (encoder, camera), with a select entity. |
+| `assert_capture` | Records why the firmware aborted (failed assert with file and line, `abort()` caller, task stack overflow) and reports it after the reboot. |
 | `video_core`, `video_controls` | Shared frame types and runtime option entities; loaded automatically. |
 
 ## Usage
@@ -169,6 +170,8 @@ a YAML list, for example one chain per camera.
 - **rtsp_server**: `port`, `path`, `session_name`, `max_clients`, `buffer_size`.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
+- **assert_capture**: `last_crash` (text sensor). The record is also logged
+  at boot and in the config dump.
 - **video_palette**: `targets` (ISPs, and cameras that colour their own image
   such as the HTI-301), `palette` (initial). The select restores its last
   value.
