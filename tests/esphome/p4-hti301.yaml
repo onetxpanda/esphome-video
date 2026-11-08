@@ -23,7 +23,7 @@ external_components:
   - source:
       type: local
       path: ../../components
-    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, video_palette, h264_encoder, rtsp_server]
+    components: [assert_capture, video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, video_palette, h264_encoder, rtsp_server]
 
 logger:
 api:
@@ -49,6 +49,10 @@ i2c:
 mlx90640:
   id: mlx
   i2c_id: bus_i2c
+
+assert_capture:
+  last_crash:
+    name: "Last Crash"
 
 usb_host:
   enable_hubs: true
