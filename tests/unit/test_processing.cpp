@@ -159,9 +159,41 @@ static void bench() {
   }
 }
 
+// The HTI-301's 384x288 frames: every stage's working memory at that size,
+// temporal history and median included, with the results still correct.
+static void test_large_frames() {
+  const int w = 384, h = 288, n = w * h;
+  radiometric::Processor p;
+  radiometric::Options o;
+  o.temporal_frames = 4;
+  o.median_filter = true;
+  p.set_options(o);
+  std::vector<float> t(n, 22.0f), out(n);
+  t[100 * w + 200] = 60.0f;
+  t[10 * w + 10] = NAN;
+  bool ok = true;
+  for (int i = 0; i < 6; i++)
+    ok = p.process(t.data(), out.data(), w, h) && ok;
+  CHECK(ok);
+  CHECK(p.stats().valid && NEAR(p.stats().median, 22.0f, 1e-4f) && NEAR(out[10 * w + 10], 22.0f, 1e-4f));
+  CHECK(NEAR(out[100 * w + 200], 22.0f, 1e-4f));  // a lone hot pixel is removed by the median
+  isp::CpuIsp c;
+  c.set_palette(gray_palette());
+  isp::Options io;
+  io.range_min = 0;
+  io.range_max = 255;
+  io.scale = 1;
+  io.format = video::ImageFormat::RGB565_LE;
+  CHECK(c.tone_map(out.data(), w, h, io));
+  std::vector<uint8_t> img(static_cast<size_t>(n) * 2, 0);
+  c.render(io, img.data(), w * 2);
+  CHECK(c.width() == w && c.height() == h);
+}
+
 int main() {
   test_radiometric();
   test_isp();
+  test_large_frames();
   bench();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

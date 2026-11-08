@@ -78,6 +78,7 @@ class Isp : public Component, public video::RadiometricSink, public video::Image
   uint8_t *ppa_in_{nullptr};  // input-resolution colour image
   size_t ppa_in_cap_{0};
   bool ppa_error_logged_{false};
+  bool memory_error_logged_{false};
 #endif
 
   bool log_timing_{false};

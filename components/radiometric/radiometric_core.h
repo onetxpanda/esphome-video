@@ -9,7 +9,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+
+#include "../video_core/frame.h"
 
 namespace esphome {
 namespace radiometric {
@@ -37,15 +38,17 @@ class Processor {
 
   // Processes `in` (width*height temperatures) into `out` (same size; may
   // alias `in`) and updates stats(). A size change restarts the history.
-  void process(const float *in, float *out, uint16_t width, uint16_t height);
+  // False (stats invalid, `out` untouched) when its working memory cannot be
+  // allocated.
+  bool process(const float *in, float *out, uint16_t width, uint16_t height);
   const Stats &stats() const { return this->stats_; }
 
  protected:
   Options opt_;
   uint16_t w_{0}, h_{0};
-  std::vector<float> history_;  // MAX_TEMPORAL frames
+  video::LargeBuffer<float> history_;  // MAX_TEMPORAL frames, only while averaging
   uint8_t history_count_{0}, history_next_{0};
-  std::vector<float> work_, tmp_;
+  video::LargeBuffer<float> work_, tmp_;
   Stats stats_;
 };
 

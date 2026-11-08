@@ -111,7 +111,28 @@ static void test_threads() {
   std::printf("  threads: %d frames handed, %d dropped (pool full)\n", handed.load(), dropped.load());
 }
 
+static void test_large_buffer() {
+  LargeBuffer<float> b;
+  CHECK(b.size() == 0 && b.data() == nullptr);
+  CHECK(b.ensure(1000));
+  CHECK(b.size() == 1000 && b.data() != nullptr);
+  bool zero = true;
+  for (size_t i = 0; i < b.size(); i++)
+    zero = zero && b[i] == 0.0f;
+  CHECK(zero);
+  b[999] = 3.5f;
+  float *p = b.data();
+  CHECK(b.ensure(1000));  // same size: kept, contents unchanged
+  CHECK(b.data() == p && b[999] == 3.5f);
+  CHECK(b.ensure(10));  // new size: reallocated and zeroed
+  CHECK(b.size() == 10 && b[9] == 0.0f);
+  CHECK(b.ensure(0) && b.size() == 0);
+  b.reset();
+  CHECK(b.data() == nullptr);
+}
+
 int main() {
+  test_large_buffer();
   test_pool_basics();
   test_frames_hold_buffers();
   test_failed_allocation();

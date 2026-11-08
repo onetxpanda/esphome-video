@@ -48,7 +48,8 @@ class CpuIsp {
   const std::array<Rgb, 256> &palette() const { return this->palette_; }
 
   // Tone-maps `in` (in_w x in_h values) to the index image (mirroring applied).
-  void tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o);
+  // False when the index buffer cannot be allocated.
+  bool tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o);
   const uint8_t *indices() const { return this->idx_.data(); }
 
   // Writes the tone-mapped image at indices() to `dst` (stride bytes per
@@ -66,7 +67,7 @@ class CpuIsp {
   template<video::ImageFormat F> void bilinear_(int s, uint8_t *dst, uint32_t stride) const;
   std::array<Rgb, 256> palette_{};
   std::array<uint16_t, 256> pal565_le_{};  // palette as RGB565 values
-  std::vector<uint8_t> idx_;
+  video::LargeBuffer<uint8_t> idx_;
   uint16_t w_{0}, h_{0};
 };
 

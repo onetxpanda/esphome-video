@@ -78,7 +78,8 @@ PIPELINE_TESTS = [
     ("test_overlay", ["unit/test_overlay.cpp", "video_core/frame.cpp", "overlay/overlay_core.cpp"],
      ["video_core", "overlay"]),
     ("test_assembler", ["unit/test_assembler.cpp", "mlx90640/subpage_assembler.cpp"], ["mlx90640"]),
-    ("test_hti301", ["unit/test_hti301.cpp", "hti301/hti301_core.cpp"], ["hti301"]),
+    ("test_hti301", ["unit/test_hti301.cpp", "hti301/hti301_core.cpp", "video_core/frame.cpp"],
+     ["video_core", "hti301"]),
 ]
 
 

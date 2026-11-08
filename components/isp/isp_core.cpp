@@ -24,10 +24,13 @@ void CpuIsp::set_palette(const std::array<Rgb, 256> &palette) {
   }
 }
 
-void CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o) {
+bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o) {
+  if (!this->idx_.ensure(static_cast<size_t>(in_w) * in_h)) {
+    this->w_ = this->h_ = 0;
+    return false;
+  }
   this->w_ = in_w;
   this->h_ = in_h;
-  this->idx_.resize(static_cast<size_t>(in_w) * in_h);
   const float span = std::max(o.range_max - o.range_min, 1e-3f);
   const float k = 255.0f / span;
   for (int y = 0; y < in_h; y++) {
@@ -45,6 +48,7 @@ void CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
       this->idx_[y * in_w + x] = i;
     }
   }
+  return true;
 }
 
 inline void CpuIsp::write_px_(uint8_t *p, uint8_t idx, ImageFormat f) const {

@@ -19,17 +19,19 @@ void Processor::set_options(const Options &o) {
   this->opt_ = n;
 }
 
-void Processor::process(const float *in, float *out, uint16_t width, uint16_t height) {
+bool Processor::process(const float *in, float *out, uint16_t width, uint16_t height) {
   const size_t n = static_cast<size_t>(width) * height;
   if (n == 0 || in == nullptr || out == nullptr)
-    return;
+    return false;
   if (width != this->w_ || height != this->h_) {
     this->w_ = width;
     this->h_ = height;
-    this->history_.assign(n * MAX_TEMPORAL, 0.0f);
+    this->history_.reset();
     this->history_count_ = this->history_next_ = 0;
-    this->work_.resize(n);
-    this->tmp_.resize(n);
+  }
+  if (!this->work_.ensure(n) || !this->tmp_.ensure(n)) {
+    this->stats_.valid = false;
+    return false;
   }
   float *w = this->work_.data();
   std::memcpy(w, in, n * sizeof(float));
@@ -65,7 +67,12 @@ void Processor::process(const float *in, float *out, uint16_t width, uint16_t he
 
   // 3. Temporal average.
   const uint8_t depth = this->opt_.temporal_frames;
-  if (depth > 1) {
+  if (depth > 1 && this->history_.size() != n * MAX_TEMPORAL) {
+    this->history_count_ = this->history_next_ = 0;
+    if (!this->history_.ensure(n * MAX_TEMPORAL))
+      this->history_.reset();  // out of memory: no averaging this frame
+  }
+  if (depth > 1 && this->history_.size() == n * MAX_TEMPORAL) {
     std::memcpy(&this->history_[static_cast<size_t>(this->history_next_) * n], w, n * sizeof(float));
     this->history_next_ = static_cast<uint8_t>((this->history_next_ + 1) % depth);
     if (this->history_count_ < depth)
@@ -129,6 +136,7 @@ void Processor::process(const float *in, float *out, uint16_t width, uint16_t he
 
   if (out != w)
     std::memcpy(out, w, n * sizeof(float));
+  return true;
 }
 
 }  // namespace radiometric

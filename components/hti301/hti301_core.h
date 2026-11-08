@@ -17,7 +17,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <vector>
+
+#include "../video_core/frame.h"
 
 namespace esphome {
 namespace hti301 {
@@ -210,9 +211,9 @@ Environment resolve_environment(const Environment &overrides, const Metadata &m)
 
 class TemperatureTable {
  public:
-  TemperatureTable() : table_(TABLE_SIZE) {}
   // Takes the calibration from `m` and the scene from `env`. False if the
-  // calibration cannot be used (e.g. cal_01 == 0).
+  // calibration cannot be used (e.g. cal_01 == 0) or the table (64 KB, in
+  // PSRAM on the device) cannot be allocated.
   bool prepare(const Metadata &m, const Environment &env);
   // The temperature for one raw value; NaN where the calibration has none.
   float temperature(uint16_t raw) const;
@@ -221,7 +222,7 @@ class TemperatureTable {
   float lookup(uint16_t raw) const { return this->table_[raw & RAW_MASK]; }
 
  protected:
-  std::vector<float> table_;
+  video::LargeBuffer<float> table_;
   float cal_a_{0}, cal_b_{0}, cal_c_{0}, cal_d_{0}, cal_01_{1};
   float numerator_sub_{0}, denominator_{1}, ambient_{0}, distance_{0}, correction_{0};
   int table_offset_{0};

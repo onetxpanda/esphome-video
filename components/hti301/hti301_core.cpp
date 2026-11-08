@@ -221,7 +221,7 @@ static inline double pow4(double x) {
 bool TemperatureTable::prepare(const Metadata &m, const Environment &env) {
   static constexpr double ZEROC = 273.15;
   static constexpr float CAL_00_OFFSET = 390.0f, CAL_00_FPAMUL = 7.05f;
-  if (!m.valid || !(env.emissivity > 0.0f))
+  if (!m.valid || !(env.emissivity > 0.0f) || !this->table_.ensure(TABLE_SIZE))
     return false;
 
   // Atmospheric transmittance over the (capped) distance.

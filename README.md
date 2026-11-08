@@ -162,7 +162,10 @@ own task. No stage copies a frame to pass it on. Frame buffers come from
 fixed pools and are reference counted (`FrameRef`). A consumer that needs a
 frame after its call returns keeps a reference, and the buffer goes back to
 its pool when the last reference is dropped. If a source finds every buffer
-still in use, it drops that frame rather than wait.
+still in use, it drops that frame rather than wait. Stages' whole-frame working
+memory (the temporal history, filter scratch, palette indices) is allocated
+in PSRAM on the device. If it cannot be allocated, the stage logs an error
+and drops frames instead of stopping the device.
 
 ### Tasks
 
