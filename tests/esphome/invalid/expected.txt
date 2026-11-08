@@ -9,3 +9,4 @@ duplicate_source.yaml|source lists the same component more than once
 isp_range.yaml|range_min must be below range_max
 camera_variant.yaml|The hardware JPEG encoder is only available on ESP32P4
 hti301_variant.yaml|The HTI-301 (USB 2.0 high speed) is only available on ESP32P4
+switch_duplicate.yaml|sources lists the same component more than once

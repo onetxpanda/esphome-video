@@ -33,6 +33,7 @@ CONF_MAX = "max"
 CONF_MEAN = "mean"
 CONF_MEDIAN = "median"
 CONF_CENTER = "center"
+CONF_LOG_TIMING = "log_timing"
 SENSORS = [CONF_MIN, CONF_MAX, CONF_MEAN, CONF_MEDIAN, CONF_CENTER]
 
 radiometric_ns = cg.esphome_ns.namespace("radiometric")
@@ -65,6 +66,7 @@ CONFIG_SCHEMA = cv.Schema(
             }
         ),
         **{cv.Optional(k): _TEMP for k in SENSORS},
+        cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
     }
 ).extend(cv.polling_component_schema("1s"))
 
@@ -78,6 +80,7 @@ async def to_code(config):
     cg.add(var.set_temporal_frames(config[CONF_TEMPORAL_FRAMES]))
     cg.add(var.set_median_filter(config[CONF_MEDIAN_FILTER]))
     cg.add(var.set_outlier_level(config[CONF_OUTLIER_LEVEL]))
+    cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
     for key in SENSORS:
         if key in config:
             sens = await sensor.new_sensor(config[key])

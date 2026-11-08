@@ -5,6 +5,7 @@
 // are processed on the source's task; sensors publish from the main loop
 // every update_interval.
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 
@@ -40,6 +41,8 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
   void set_mean_sensor(sensor::Sensor *s) { this->mean_sensor_ = s; }
   void set_median_sensor(sensor::Sensor *s) { this->median_sensor_ = s; }
   void set_center_sensor(sensor::Sensor *s) { this->center_sensor_ = s; }
+  // Logs the processing time per frame every 10 s.
+  void set_log_timing(bool v) { this->log_timing_ = v; }
 
  protected:
   bool has_sensors_() const {
@@ -47,10 +50,16 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
            this->center_sensor_;
   }
 
-  std::mutex mutex_;  // guards processor_ options and latest_
-  Processor processor_;
+  // Guards options_, options_changed_, latest_ and latest_new_ only: never
+  // held while a frame is processed, so the main loop is not kept waiting.
+  std::mutex mutex_;
+  Processor processor_;  // the source's task only
   Options options_;
+  bool options_changed_{false};
   Stats latest_;
+  bool log_timing_{false};
+  std::atomic<uint32_t> process_us_{0}, processed_{0};
+  uint32_t last_timing_ms_{0};
   bool memory_error_logged_{false};
   bool latest_new_{false};
 

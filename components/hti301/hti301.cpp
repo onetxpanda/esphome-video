@@ -117,7 +117,7 @@ void HTI301::loop() {
   this->scan_bus_(now);
   const uint32_t last = this->last_frame_ms_.load();
   this->publish_streaming_(this->stage_ == Stage::STREAMING && this->out_mode_.load() != UNKNOWN && last != 0 &&
-                           now - last < STREAMING_MS);
+                           static_cast<int32_t>(now - last) < static_cast<int32_t>(STREAMING_MS));
   this->report_(now);
 }
 
@@ -210,14 +210,16 @@ void HTI301::run_stage_() {
     case Stage::IDLE:
       return;
     case Stage::STREAMING: {
+      // The USB task stores frame times; read the clock after loading one, so
+      // a frame that arrived since `now` cannot make the gap negative.
       const uint32_t last = this->last_frame_ms_.load();
-      const uint32_t quiet = now - (last != 0 ? last : this->stream_start_ms_);
+      const int32_t quiet = static_cast<int32_t>(millis() - (last != 0 ? last : this->stream_start_ms_));
       const bool dead = this->inflight_.load() <= 0;
-      if (dead || quiet > STALL_MS) {
+      if (dead || quiet > static_cast<int32_t>(STALL_MS)) {
         if (dead) {
           ESP_LOGW(TAG, "Every isochronous transfer has ended; restarting the stream");
         } else {
-          ESP_LOGW(TAG, "No complete frame for %u ms; restarting the stream", static_cast<unsigned>(quiet));
+          ESP_LOGW(TAG, "No complete frame for %d ms; restarting the stream", static_cast<int>(quiet));
         }
         this->restarts_++;
         this->status_set_warning();
@@ -614,11 +616,13 @@ void HTI301::process_radiometric_(const video::FrameRef &raw, uint32_t ts) {
   const Environment want{this->env_emissivity_.load(), this->env_reflected_.load(), this->env_ambient_.load(),
                          this->env_humidity_.load(),   this->env_distance_.load(),  NAN};
   const Environment env = resolve_environment(want, m);
+  const uint32_t t0 = micros();
   if (!raw_to_temperatures(words, static_cast<size_t>(this->width_) * this->image_rows_, m, env, this->table_,
                            f.temps())) {
     this->bad_calibration_++;
     return;
   }
+  this->convert_us_ += micros() - t0;
   f.width = this->width_;
   f.height = this->image_rows_;
   f.timestamp_ms = ts;
@@ -643,7 +647,9 @@ void HTI301::process_image_(const video::FrameRef &raw, uint32_t ts) {
   f.format = video::ImageFormat::RGB565_LE;
   f.timestamp_ms = ts;
   f.sequence = ++this->sequence_;
+  const uint32_t t0 = micros();
   yuyv_to_rgb565(raw.data(), this->width_, this->image_rows_, f.buffer.data(), f.stride);
+  this->convert_us_ += micros() - t0;
   this->img_sinks_.deliver(f, [](video::ImageSink *s, const video::ImageFrame &fr) { s->on_image_frame(fr); });
 }
 
@@ -982,7 +988,7 @@ void HTI301::report_(uint32_t now) {
                  rep = this->replaced_.exchange(0), lost = this->packets_lost_.exchange(0),
                  err = this->transfer_errors_.exchange(0), nob = this->no_buffer_.exchange(0),
                  bad = this->bad_calibration_.exchange(0), us = this->process_us_.exchange(0),
-                 n = this->processed_.exchange(0);
+                 n = this->processed_.exchange(0), cus = this->convert_us_.exchange(0);
   if (this->stage_ != Stage::STREAMING)
     return;
   const float s = elapsed / 1000.0f;
@@ -991,10 +997,11 @@ void HTI301::report_(uint32_t now) {
   if (this->log_timing_ || lost != 0 || err != 0) {
     ESP_LOGI(TAG,
              "Over %.1f s: %.2f frames/s, %u incomplete, %u skipped after a setting change, %u superseded, "
-             "%u packets lost, %u transfer errors, %u without a buffer; processing %.2f ms/frame; %u restarts",
+             "%u packets lost, %u transfer errors, %u without a buffer; per frame: %.2f ms conversion, "
+             "%.2f ms in the stages after it; %u restarts",
              s, fr / s, static_cast<unsigned>(inc), static_cast<unsigned>(set), static_cast<unsigned>(rep),
              static_cast<unsigned>(lost), static_cast<unsigned>(err), static_cast<unsigned>(nob),
-             n ? us / 1000.0f / n : 0.0f, static_cast<unsigned>(this->restarts_));
+             n ? cus / 1000.0f / n : 0.0f, n && us > cus ? (us - cus) / 1000.0f / n : 0.0f, static_cast<unsigned>(this->restarts_));
   }
 }
 

@@ -27,6 +27,7 @@ class SourceInput : public video::ImageSink {
   SourceInput(H264Encoder *encoder, uint8_t index) : encoder_(encoder), index_(index) {}
   void on_image_frame(const video::ImageFrame &frame) override;
   bool wants_frames() const override;
+  void on_source_change() override;
 
  protected:
   H264Encoder *encoder_;
@@ -72,6 +73,9 @@ class H264Encoder : public Component {
   // Switches the encoded source. The next frame is a keyframe; a different
   // size or format reconfigures the encoder. Thread-safe.
   void set_active_source(uint8_t index);
+  // The source at `index` now shows different content: if it is the one
+  // being encoded, start afresh as on a source switch.
+  void source_changed(uint8_t index);
 
   // Called by SourceInput, on the source's task.
   void handle_frame(uint8_t source, const video::ImageFrame &frame);

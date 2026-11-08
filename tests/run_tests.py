@@ -362,7 +362,7 @@ def esphome_tests(esphome):
         r = run([esphome, "compile", yaml], cwd=d, timeout=1800)
         ours = [ln for ln in (r.stdout + r.stderr).splitlines() if "warning:" in ln and re.search(
             r"components/(video_core|video_controls|mlx90640|hti301|radiometric|isp|overlay|video_camera|"
-            r"video_test_pattern|h264_encoder|rtsp_server)/", ln)]
+            r"video_test_pattern|video_switch|h264_encoder|rtsp_server)/", ln)]
         if not check(not ours, f"{yaml}: no compiler warnings in our components"):
             print("\n".join(ours[:10]))
         if not check(r.returncode == 0, f"{yaml} compiles"):
