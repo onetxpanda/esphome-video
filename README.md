@@ -8,6 +8,7 @@ encoders; there is no software encoding.
 | Component | Role |
 |---|---|
 | `mlx90640` | MLX90640 32x24 thermal sensor. Radiometric source (temperatures). |
+| `hti301` | HTI-301 USB thermal camera, 384x288 at 25 fps. Radiometric source in radiometric mode; image source (the camera's own processed image) in processed mode. |
 | `radiometric` | Temperature processing: invalid-pixel repair, outlier filter, temporal average, median filter, statistics sensors. |
 | `isp` | Radiometric frames to images: tone mapping onto a palette, mirroring, upscaling (CPU or the P4's PPA), output format. |
 | `overlay` | Draws a frame's annotations (e.g. min/max/centre markers with values) into the image. |
@@ -73,14 +74,53 @@ rtsp_server:
 `tests/esphome/p4-thermal-rtsp.yaml` is a complete configuration with every
 option entity.
 
+### HTI-301
+
+The HTI-301 connects to the P4's USB 2.0 high-speed port and needs ESPHome's
+`usb_host`. In place of `mlx90640` and `i2c` above:
+
+```yaml
+usb_host:
+
+hti301:
+  id: thermal_sensor
+  mode: radiometric      # or processed: the camera's own image, as an image source
+  range: normal          # -20..120 °C; high: -20..450 °C
+  controls:
+    mode:
+      name: "Thermal Mode"
+    calibrate:
+      name: "Thermal Calibrate"
+  streaming:
+    name: "Thermal Streaming"
+```
+
+In radiometric mode the camera feeds `radiometric` as above. In processed
+mode it produces images itself, so an encoder or `video_camera` can take it
+as a `source:` directly. To switch between the two at runtime, give
+`h264_encoder` both as sources and use its select (see
+`tests/esphome/p4-hti301.yaml`).
+
 ### Options
 
 Every stage takes its options in YAML. Most can also be changed at runtime
 through Home Assistant entities, declared under `controls:`. Each entity
 restores its last value on boot.
 
+`radiometric`, `isp` and `overlay` can each be configured more than once, as
+a YAML list, for example one chain per camera.
+
 - **mlx90640**: `refresh_rate` (0.5Hz–64Hz), `frame_mode` (interpolate, merge),
   `emissivity`. Controls: `refresh_rate`, `frame_mode`.
+- **hti301**: `mode` (radiometric, processed), `range` (normal, high),
+  `palette` (processed mode: white_hot, black_hot, ironbow, lava, rainbow,
+  iron_gray, red_hot, rainbow_2), `emissivity` (default 0.95), and
+  `reflected_temperature`, `ambient_temperature`, `humidity`, `distance`
+  (left out: the values stored in the camera). `transfers` and
+  `packets_per_transfer` size the USB buffering (default 8 x 16 packets,
+  16 ms). Binary sensor: `streaming` (on while frames arrive). Controls:
+  `mode`, `range`, `palette`, `emissivity`, and a `calibrate` button
+  (shutter calibration).
 - **radiometric**: `temporal_frames` (1–8; 1 = off), `median_filter`,
   `outlier_level` (degrees; 0 = off), `update_interval` for the sensors.
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
@@ -98,8 +138,8 @@ restores its last value on boot.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
 
-Several stages can be marked `log_timing: true` (`mlx90640`, `isp`). They
-then log their per-stage times every 10 s.
+Several stages can be marked `log_timing: true` (`mlx90640`, `hti301`,
+`isp`). They then log their per-stage times every 10 s.
 
 ## How it works
 
@@ -128,6 +168,12 @@ still in use, it drops that frame rather than wait.
   and assembles frames. `radiometric` runs on the same task; its processing
   takes well under a millisecond per frame. Its sensors are published from
   the main loop every `update_interval`.
+- `hti301` receives on the USB host client's task: each isochronous packet's
+  payload is copied into the frame being assembled, and a complete frame goes
+  to the camera's own processing task. Only the newest frame waits there;
+  older ones are dropped. That task converts the frame and runs the sinks
+  (`radiometric` in radiometric mode). The main loop sets up the stream and
+  sends commands.
 - `isp` has its own task. Only the newest frame waits for it; older frames
   are dropped. The `overlay` and the outputs it feeds run on this task.
 - `h264_encoder` encodes on its own task, one frame at a time. Frames that
@@ -153,6 +199,29 @@ from both row neighbours by at least `outlier_level` becomes their average),
 the running average and the 3x3 median. Statistics are computed last, in
 sensor coordinates. The min, max and centre become annotations on the frame.
 
+`hti301` follows the camera's own driver. On connection it reads the UVC
+descriptors, sets the streaming interface to alternate setting 0,
+negotiates the stream with probe/commit, selects the isochronous alternate
+setting and queues the transfers, pausing between steps as that driver does.
+A frame is 384x292 16-bit words: 288 image rows and 4 rows of camera
+metadata. A frame counts only if every packet arrived and it has exactly the
+negotiated size; others are dropped. Commands (mode, range, palette,
+calibrate) are written to the camera terminal's Zoom (Absolute) control. The
+camera cannot report its mode, so after every stream start the component
+sends the configured mode, range and palette, and passes frames on only
+once the camera has accepted the mode. After a mode or range change it skips
+5 frames. If no complete frame arrives for 3 s, it restarts the stream.
+
+In radiometric mode each pixel is a 14-bit raw value. The metadata rows hold
+the camera's calibration (detector and shutter temperatures, calibration
+constants) and the scene parameters stored in it. The conversion is the one
+in ht301_hacklib, including atmospheric transmission over the distance. For
+each frame a table is built over the frame's range of raw values, and every
+pixel is looked up in it. In processed mode the image rows are full-range
+YUYV, converted to RGB565. `radiometric` treats readings above 300 °C as
+invalid, so in the high range hotter pixels are repaired from their
+neighbours.
+
 `isp` tone-maps once, at sensor resolution: each value becomes an index
 into the 256-entry palette, and mirroring is applied at the same time.
 Scaling then works on these indices. The CPU path has two modes. Nearest
@@ -175,8 +244,9 @@ the overlay instead.
 `tests/run_tests.py` runs:
 
 - unit tests under AddressSanitizer and UBSan: frames and pools, radiometric
-  processing, the CPU ISP, overlay drawing, sub-page assembly, and the RTSP
-  protocol helpers; the frame pool also runs under ThreadSanitizer;
+  processing, the CPU ISP, overlay drawing, sub-page assembly, the HTI-301
+  core (descriptors, packet assembly, the temperature conversion against the
+  reference code, YUYV), and the RTSP protocol helpers; the frame pool also runs under ThreadSanitizer;
 - the RTSP server on the host against ffmpeg, ffprobe and GStreamer clients;
 - the encoder's build guard;
 - ESPHome configurations: invalid ones must be rejected with the expected

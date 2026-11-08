@@ -18,6 +18,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE
 
 CODEOWNERS = ["@onetxpanda"]
+MULTI_CONF = True  # e.g. one chain per camera
 DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["video_core", "video_controls"]
 

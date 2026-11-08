@@ -3,7 +3,8 @@
 
 1. Unit tests (ASan/UBSan, and TSan for the frame pool): frames and pools,
    radiometric processing, the CPU ISP, overlay drawing, MLX90640 sub-page
-   assembly, and the RTSP/RTP protocol helpers.
+   assembly, the HTI-301 core (descriptors, packet assembly, temperatures,
+   YUYV), and the RTSP/RTP protocol helpers.
 2. Host RTSP server (AddressSanitizer + UBSan build) against real clients:
    ffprobe, ffmpeg (decode with errors fatal, TCP and default transport),
    GStreamer rtspsrc, three concurrent clients, the client limit, raw-socket
@@ -77,6 +78,7 @@ PIPELINE_TESTS = [
     ("test_overlay", ["unit/test_overlay.cpp", "video_core/frame.cpp", "overlay/overlay_core.cpp"],
      ["video_core", "overlay"]),
     ("test_assembler", ["unit/test_assembler.cpp", "mlx90640/subpage_assembler.cpp"], ["mlx90640"]),
+    ("test_hti301", ["unit/test_hti301.cpp", "hti301/hti301_core.cpp"], ["hti301"]),
 ]
 
 
@@ -358,7 +360,7 @@ def esphome_tests(esphome):
         shutil.rmtree(os.path.join(d, ".esphome", "build", name, "build", "esp-idf", "src"), ignore_errors=True)
         r = run([esphome, "compile", yaml], cwd=d, timeout=1800)
         ours = [ln for ln in (r.stdout + r.stderr).splitlines() if "warning:" in ln and re.search(
-            r"components/(video_core|video_controls|mlx90640|radiometric|isp|overlay|video_camera|"
+            r"components/(video_core|video_controls|mlx90640|hti301|radiometric|isp|overlay|video_camera|"
             r"video_test_pattern|h264_encoder|rtsp_server)/", ln)]
         if not check(not ours, f"{yaml}: no compiler warnings in our components"):
             print("\n".join(ours[:10]))

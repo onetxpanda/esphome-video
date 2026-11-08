@@ -2,10 +2,12 @@
 
 // Home Assistant entities that set a component option at runtime. Each one
 // calls a setter with the new value, restores its last value on boot, and
-// with nothing saved applies the configured initial value.
+// with nothing saved applies the configured initial value. A button just
+// calls its action when pressed.
 
 #include <functional>
 
+#include "esphome/components/button/button.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
@@ -58,6 +60,18 @@ class ControlSelect : public select::Select, public Component {
   size_t initial_{0};
   bool restore_{true};
   ESPPreferenceObject pref_;
+};
+
+class ControlButton : public button::Button, public Component {
+ public:
+  void set_apply(std::function<void()> &&f) { this->apply_ = std::move(f); }
+
+ protected:
+  void press_action() override {
+    if (this->apply_)
+      this->apply_();
+  }
+  std::function<void()> apply_;
 };
 
 }  // namespace video_controls
