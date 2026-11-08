@@ -1,0 +1,130 @@
+# Compile test: an HTI-301 USB thermal camera beside an MLX90640 on an
+# ESP32-P4, each with its own processing chain (several radiometric, isp and
+# overlay instances).
+#   hti301 (radiometric) -> radiometric -> isp -> overlay -> h264_encoder -> rtsp_server
+#   hti301 (processed)  ----------------------------------/
+#   mlx90640 ------------> radiometric -> isp -> overlay -/
+# The encoder's select switches between them; the HTI-301's mode select
+# decides which of its two outputs produces frames.
+esphome:
+  name: p4-hti301
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, h264_encoder, rtsp_server]
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+i2c:
+  - id: bus_i2c
+    sda: GPIO7
+    scl: GPIO8
+    frequency: 1MHz
+
+mlx90640:
+  id: mlx
+  i2c_id: bus_i2c
+
+usb_host:
+  enable_hubs: true
+
+hti301:
+  id: hti
+  mode: radiometric
+  range: normal
+  palette: ironbow
+  emissivity: 0.96
+  ambient_temperature: 24
+  humidity: 40%
+  distance: 1.2
+  log_timing: true
+  controls:
+    mode:
+      name: "HTI Mode"
+    range:
+      name: "HTI Range"
+    palette:
+      name: "HTI Palette"
+    emissivity:
+      name: "HTI Emissivity"
+    calibrate:
+      name: "HTI Calibrate"
+  streaming:
+    name: "HTI Streaming"
+
+radiometric:
+  - id: hti_rad
+    source: hti
+    min:
+      name: "HTI Min"
+    max:
+      name: "HTI Max"
+    center:
+      name: "HTI Center"
+  - id: mlx_rad
+    source: mlx
+    max:
+      name: "MLX Max"
+
+isp:
+  - id: hti_isp
+    source: hti_rad
+    scale: 1
+    controls:
+      range_min:
+        name: "HTI Range Min"
+  - id: mlx_isp
+    source: mlx_rad
+    scale: 20
+    scaler: ppa
+    controls:
+      range_min:
+        name: "MLX Range Min"
+
+overlay:
+  - id: hti_overlay
+    source: hti_isp
+    unit: C
+  - id: mlx_overlay
+    source: mlx_isp
+
+video_camera:
+  name: "HTI Camera"
+  source: hti_overlay
+
+h264_encoder:
+  id: hti_h264
+  source: [mlx_overlay, hti_overlay, hti]
+
+select:
+  - platform: h264_encoder
+    name: "HTI Stream Source"
+    options: ["MLX90640", "HTI-301", "HTI-301 camera image"]
+
+rtsp_server:
+  encoder: hti_h264
+  path: thermal

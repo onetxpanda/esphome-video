@@ -21,6 +21,7 @@ from esphome.const import (
 )
 
 CODEOWNERS = ["@onetxpanda"]
+MULTI_CONF = True  # e.g. one chain per camera
 AUTO_LOAD = ["video_core", "video_controls", "sensor"]
 
 CONF_TEMPORAL_FRAMES = "temporal_frames"

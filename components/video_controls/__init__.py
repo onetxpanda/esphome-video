@@ -1,19 +1,20 @@
-"""Runtime option entities (number, switch, select) for esphome-video
+"""Runtime option entities (number, switch, select, button) for esphome-video
 components. Not configured directly: a component's `controls:` block creates
 them through the helpers below."""
 
 import esphome.codegen as cg
-from esphome.components import number, select, switch
+from esphome.components import button, number, select, switch
 import esphome.config_validation as cv
 from esphome.const import CONF_RESTORE_VALUE
 
 CODEOWNERS = ["@onetxpanda"]
-AUTO_LOAD = ["number", "select", "switch"]
+AUTO_LOAD = ["button", "number", "select", "switch"]
 
 ns = cg.esphome_ns.namespace("video_controls")
 ControlNumber = ns.class_("ControlNumber", number.Number, cg.Component)
 ControlSwitch = ns.class_("ControlSwitch", switch.Switch, cg.Component)
 ControlSelect = ns.class_("ControlSelect", select.Select, cg.Component)
+ControlButton = ns.class_("ControlButton", button.Button, cg.Component)
 
 
 def number_control(**kwargs):
@@ -34,6 +35,10 @@ def select_control():
     return select.select_schema(ControlSelect).extend(
         {cv.Optional(CONF_RESTORE_VALUE, default=True): cv.boolean}
     ).extend(cv.COMPONENT_SCHEMA)
+
+
+def button_control():
+    return button.button_schema(ControlButton).extend(cv.COMPONENT_SCHEMA)
 
 
 def _setter(parent, method, arg_type, convert):
@@ -64,4 +69,11 @@ async def new_select_control(conf, parent, method, labels, initial_index, conver
     cg.add(var.set_apply(_setter(parent, method, "size_t", convert)))
     cg.add(var.set_initial(initial_index))
     cg.add(var.set_restore(conf[CONF_RESTORE_VALUE]))
+    return var
+
+
+async def new_button_control(conf, parent, method):
+    var = await button.new_button(conf)
+    await cg.register_component(var, conf)
+    cg.add(var.set_apply(cg.RawExpression(f"[]() {{ {parent}->{method}(); }}")))
     return var
