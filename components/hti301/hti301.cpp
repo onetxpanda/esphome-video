@@ -516,6 +516,7 @@ void HTI301::on_transfer_(usb_transfer_t *t) {
   const bool gone = st == USB_TRANSFER_STATUS_CANCELED || st == USB_TRANSFER_STATUS_NO_DEVICE;
   if (st == USB_TRANSFER_STATUS_COMPLETED) {
     const uint8_t *p = t->data_buffer;
+    int leading = 0;  // packets at the start of this transfer that the controller skipped
     for (int i = 0; i < t->num_isoc_packets; i++) {
       const usb_isoc_packet_desc_t &d = t->isoc_packet_desc[i];
       if (d.status == USB_TRANSFER_STATUS_COMPLETED) {
@@ -524,6 +525,13 @@ void HTI301::on_transfer_(usb_transfer_t *t) {
       } else {
         this->assembler_.lost();
         this->packets_lost_++;
+        if (d.status == USB_TRANSFER_STATUS_SKIPPED) {
+          this->skipped_++;
+          if (i == leading) {
+            leading++;
+            this->skipped_first_++;
+          }
+        }
       }
       p += d.num_bytes;
     }
@@ -986,6 +994,7 @@ void HTI301::report_(uint32_t now) {
   this->last_report_ms_ = now;
   const uint32_t fr = this->frames_.exchange(0), inc = this->incomplete_.exchange(0), set = this->settled_.exchange(0),
                  rep = this->replaced_.exchange(0), lost = this->packets_lost_.exchange(0),
+                 skip = this->skipped_.exchange(0), first = this->skipped_first_.exchange(0),
                  err = this->transfer_errors_.exchange(0), nob = this->no_buffer_.exchange(0),
                  bad = this->bad_calibration_.exchange(0), us = this->process_us_.exchange(0),
                  n = this->processed_.exchange(0), cus = this->convert_us_.exchange(0);
@@ -997,10 +1006,12 @@ void HTI301::report_(uint32_t now) {
   if (this->log_timing_ || lost != 0 || err != 0) {
     ESP_LOGI(TAG,
              "Over %.1f s: %.2f frames/s, %u incomplete, %u skipped after a setting change, %u superseded, "
-             "%u packets lost, %u transfer errors, %u without a buffer; per frame: %.2f ms conversion, "
+             "%u packets lost (%u not run in time, %u of them at the start of a transfer; %u with errors), "
+             "%u transfer errors, %u without a buffer; per frame: %.2f ms conversion, "
              "%.2f ms in the stages after it; %u restarts",
              s, fr / s, static_cast<unsigned>(inc), static_cast<unsigned>(set), static_cast<unsigned>(rep),
-             static_cast<unsigned>(lost), static_cast<unsigned>(err), static_cast<unsigned>(nob),
+             static_cast<unsigned>(lost), static_cast<unsigned>(skip), static_cast<unsigned>(first),
+             static_cast<unsigned>(lost > skip ? lost - skip : 0), static_cast<unsigned>(err), static_cast<unsigned>(nob),
              n ? cus / 1000.0f / n : 0.0f, n && us > cus ? (us - cus) / 1000.0f / n : 0.0f, static_cast<unsigned>(this->restarts_));
   }
 }
