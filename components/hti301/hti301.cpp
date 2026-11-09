@@ -625,8 +625,7 @@ void HTI301::process_radiometric_(const video::FrameRef &raw, uint32_t ts) {
                          this->env_humidity_.load(),   this->env_distance_.load(),  NAN};
   const Environment env = resolve_environment(want, m);
   const uint32_t t0 = micros();
-  if (!raw_to_temperatures(words, static_cast<size_t>(this->width_) * this->image_rows_, m, env, this->table_,
-                           f.temps())) {
+  if (!raw_to_temperatures(words, this->width_, this->image_rows_, m, env, this->table_, f.temps(), &f.stats)) {
     this->bad_calibration_++;
     return;
   }

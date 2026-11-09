@@ -366,11 +366,62 @@ static void test_temperatures() {
     raw[i] = static_cast<uint16_t>(5000 + 50 * i) | (i % 3 == 0 ? 0xC000 : 0);
   std::vector<float> out(raw.size());
   TemperatureTable t2;
-  CHECK(raw_to_temperatures(raw.data(), raw.size(), m, env, t2, out.data()));
+  esphome::video::FrameStats fs;
+  CHECK(raw_to_temperatures(raw.data(), 8, 8, m, env, t2, out.data(), &fs));
   bool same = true;
   for (size_t i = 0; i < raw.size(); i++)
     same = same && out[i] == t2.temperature(raw[i] & RAW_MASK);
   CHECK(same);
+  // Its statistics: the first min / max pixel, the mean of per-row float sums.
+  {
+    float mn = INFINITY, mx = -INFINITY;
+    size_t mi = 0, ma = 0;
+    double sum = 0;
+    for (size_t y = 0; y < 8; y++) {
+      float rs = 0.0f;
+      for (size_t x = 0; x < 8; x++) {
+        const float v = out[y * 8 + x];
+        rs += v;
+        if (v < mn) {
+          mn = v;
+          mi = y * 8 + x;
+        }
+        if (v > mx) {
+          mx = v;
+          ma = y * 8 + x;
+        }
+      }
+      sum += rs;
+    }
+    CHECK(fs.valid && fs.min == mn && fs.max == mx && fs.mean == static_cast<float>(sum / 64));
+    CHECK(fs.min_x == mi % 8 && fs.min_y == mi / 8 && fs.max_x == ma % 8 && fs.max_y == ma / 8);
+  }
+  // A pixel with no temperature leaves them invalid: with low emissivity and
+  // hot surroundings, a cold raw value is below what the scene can emit.
+  {
+    const Environment hot{0.1f, 450.0f, 25.0f, 0.5f, 0.0f, 0.0f};
+    TemperatureTable t3;
+    CHECK(t3.prepare(m, hot));
+    uint16_t cold = 0;
+    while (cold < 16383 && !std::isnan(t3.temperature(cold)))
+      cold++;
+    CHECK(std::isnan(t3.temperature(cold)));
+    std::vector<uint16_t> r2 = raw;
+    r2[20] = cold;
+    CHECK(raw_to_temperatures(r2.data(), 8, 8, m, hot, t3, out.data(), &fs));
+    CHECK(!fs.valid);
+    // Valid exactly when every pixel is finite, over raw values on both sides of it.
+    for (uint16_t base : {static_cast<uint16_t>(cold > 400 ? cold - 400 : 0), static_cast<uint16_t>(cold + 1)}) {
+      std::vector<uint16_t> r3(64);
+      for (size_t i = 0; i < r3.size(); i++)
+        r3[i] = static_cast<uint16_t>(base + 5 * i);
+      CHECK(raw_to_temperatures(r3.data(), 8, 8, m, hot, t3, out.data(), &fs));
+      bool finite = true;
+      for (float v : out)
+        finite = finite && std::isfinite(v);
+      CHECK(fs.valid == finite);
+    }
+  }
 
   // The table range starts from the camera's reported min/max and is
   // extended for pixels outside it: exact whether that range is right, too
@@ -386,7 +437,7 @@ static void test_temperatures() {
       mr.max_raw = rg[1];
       std::vector<float> res(img.size());
       TemperatureTable tt;
-      CHECK(raw_to_temperatures(img.data(), img.size(), mr, env, tt, res.data()));
+      CHECK(raw_to_temperatures(img.data(), 50, 40, mr, env, tt, res.data()));
       bool exact = true;
       for (size_t i = 0; i < img.size(); i++)
         exact = exact && res[i] == tt.temperature(img[i]);
@@ -400,7 +451,7 @@ static void test_temperatures() {
   auto bf = make_frame(bad);
   const Metadata bm = parse_metadata(bf.data(), W, ROWS);
   CHECK(!bm.valid);
-  CHECK(!raw_to_temperatures(raw.data(), raw.size(), bm, env, t2, out.data()));
+  CHECK(!raw_to_temperatures(raw.data(), 8, 8, bm, env, t2, out.data()));
   Cal nan_cal = c;
   nan_cal.c3 = NAN;
   auto nf = make_frame(nan_cal);

@@ -24,6 +24,23 @@ void CpuIsp::set_palette(const std::array<Rgb, 256> &palette) {
   }
 }
 
+// The palette index for value t: (t - lo) * k, rounded and clamped; NaN is 0.
+// Always inlined: ESPHome builds for size, which would otherwise make this a
+// call per pixel.
+static inline __attribute__((always_inline)) uint8_t to_index(float t, float lo, float k) {
+  const float v = (t - lo) * k;
+  if (!(v > 0.0f))  // also NaN
+    return 0;
+  if (v >= 255.0f)
+    return 255;
+  return static_cast<uint8_t>(v + 0.5f);
+}
+
+static inline float index_scale(const Options &o) { return 255.0f / std::max(o.range_max - o.range_min, 1e-3f); }
+
+// The loops below keep every option in a local: they store through byte
+// pointers, which may alias anything, so a member or reference would be
+// reloaded for every pixel.
 bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o) {
   if (!this->idx_.ensure(static_cast<size_t>(in_w) * in_h)) {
     this->w_ = this->h_ = 0;
@@ -31,24 +48,72 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
   }
   this->w_ = in_w;
   this->h_ = in_h;
-  const float span = std::max(o.range_max - o.range_min, 1e-3f);
-  const float k = 255.0f / span;
+  const float lo = o.range_min, k = index_scale(o);
+  const int step = o.mirror_x ? -1 : 1;
+  const bool my = o.mirror_y;
+  uint8_t *idx = this->idx_.data();
   for (int y = 0; y < in_h; y++) {
-    const int sy = o.mirror_y ? in_h - 1 - y : y;
-    for (int x = 0; x < in_w; x++) {
-      const int sx = o.mirror_x ? in_w - 1 - x : x;
-      const float v = (in[sy * in_w + sx] - o.range_min) * k;
-      uint8_t i;
-      if (!(v > 0.0f))  // also NaN
-        i = 0;
-      else if (v >= 255.0f)
-        i = 255;
-      else
-        i = static_cast<uint8_t>(v + 0.5f);
-      this->idx_[y * in_w + x] = i;
-    }
+    const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
+    uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
+    for (int x = 0; x < in_w; x++, src += step)
+      dst[x] = to_index(*src, lo, k);
   }
   return true;
+}
+
+void CpuIsp::map_direct(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
+                        uint32_t stride) const {
+  if (in == nullptr || dst == nullptr)
+    return;
+  switch (o.format) {
+    case ImageFormat::RGB565_LE:
+      this->map_direct_<ImageFormat::RGB565_LE>(in, in_w, in_h, o, dst, stride);
+      break;
+    case ImageFormat::RGB565_BE:
+      this->map_direct_<ImageFormat::RGB565_BE>(in, in_w, in_h, o, dst, stride);
+      break;
+    case ImageFormat::RGB888:
+      this->map_direct_<ImageFormat::RGB888>(in, in_w, in_h, o, dst, stride);
+      break;
+    case ImageFormat::GRAY8:
+      this->map_direct_<ImageFormat::GRAY8>(in, in_w, in_h, o, dst, stride);
+      break;
+  }
+}
+
+template<ImageFormat F>
+void CpuIsp::map_direct_(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
+                         uint32_t stride) const {
+  const float lo = o.range_min, k = index_scale(o);
+  const int step = o.mirror_x ? -1 : 1;
+  const bool my = o.mirror_y;
+  const uint16_t *pal565 = this->pal565_le_.data();
+  const Rgb *pal = this->palette_.data();
+  for (int y = 0; y < in_h; y++) {
+    const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
+    uint8_t *p = dst + static_cast<size_t>(y) * stride;
+    for (int x = 0; x < in_w; x++, src += step) {
+      const uint8_t i = to_index(*src, lo, k);
+      if (F == ImageFormat::RGB565_LE) {
+        const uint16_t v = pal565[i];
+        p[0] = static_cast<uint8_t>(v & 0xFF);
+        p[1] = static_cast<uint8_t>(v >> 8);
+        p += 2;
+      } else if (F == ImageFormat::RGB565_BE) {
+        const uint16_t v = pal565[i];
+        p[0] = static_cast<uint8_t>(v >> 8);
+        p[1] = static_cast<uint8_t>(v & 0xFF);
+        p += 2;
+      } else if (F == ImageFormat::RGB888) {
+        p[0] = pal[i].r;
+        p[1] = pal[i].g;
+        p[2] = pal[i].b;
+        p += 3;
+      } else {
+        *p++ = i;
+      }
+    }
+  }
 }
 
 inline void CpuIsp::write_px_(uint8_t *p, uint8_t idx, ImageFormat f) const {

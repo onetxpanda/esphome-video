@@ -131,17 +131,23 @@ void Isp::task_loop_() {
 }
 
 void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler) {
-  const uint32_t t0 = micros();
-  if (!this->cpu_.tone_map(in.temps(), in.width, in.height, o)) {
-    if (!this->memory_error_logged_) {
-      ESP_LOGE(TAG, "Out of memory for a %ux%u index buffer; frames are dropped", in.width, in.height);
-      this->memory_error_logged_ = true;
-    }
-    return;
-  }
-  const uint32_t t1 = micros();
-
   const int s = o.scale < 1 ? 1 : o.scale;
+  // Unscaled output is tone-mapped straight into the output frame, below;
+  // scaled output goes through the index image.
+  const bool direct = s == 1;
+  uint32_t tone_us = 0;
+  if (!direct) {
+    const uint32_t t0 = micros();
+    if (!this->cpu_.tone_map(in.temps(), in.width, in.height, o)) {
+      if (!this->memory_error_logged_) {
+        ESP_LOGE(TAG, "Out of memory for a %ux%u index buffer; frames are dropped", in.width, in.height);
+        this->memory_error_logged_ = true;
+      }
+      return;
+    }
+    tone_us = micros() - t0;
+  }
+
   video::ImageFrame out;
   out.width = in.width * s;
   out.height = in.height * s;
@@ -168,11 +174,19 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
     return;
   }
 
-  bool done = false;
-  if (scaler == Scaler::PPA)
-    done = this->render_ppa_(o, out);
-  if (!done)
-    this->cpu_.render(o, out.buffer.data(), out.stride);
+  const uint32_t t1 = micros();
+  uint32_t scale_us = 0;
+  if (direct) {
+    this->cpu_.map_direct(in.temps(), in.width, in.height, o, out.buffer.data(), out.stride);
+    tone_us = micros() - t1;
+  } else {
+    bool done = false;
+    if (scaler == Scaler::PPA)
+      done = this->render_ppa_(o, out);
+    if (!done)
+      this->cpu_.render(o, out.buffer.data(), out.stride);
+    scale_us = micros() - t1;
+  }
   const uint32_t t2 = micros();
 
   for (uint8_t i = 0; i < in.annotations.count; i++) {
@@ -185,8 +199,8 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   this->sinks_.deliver(out, [](video::ImageSink *sk, const video::ImageFrame &fr) { sk->on_image_frame(fr); });
   const uint32_t t3 = micros();
   this->frames_++;
-  this->tone_us_ += t1 - t0;
-  this->scale_us_ += t2 - t1;
+  this->tone_us_ += tone_us;
+  this->scale_us_ += scale_us;
   this->sink_us_ += t3 - t2;
 }
 

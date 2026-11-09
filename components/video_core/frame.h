@@ -186,6 +186,15 @@ struct Annotations {
   }
 };
 
+// Statistics a source worked out while producing a frame, so a later stage
+// need not read the whole frame again. valid only if every pixel is finite;
+// positions are of the first pixel holding the min / max (row-major).
+struct FrameStats {
+  bool valid{false};
+  float min{0}, max{0}, mean{0};
+  uint16_t min_x{0}, min_y{0}, max_x{0}, max_y{0};
+};
+
 struct RadiometricFrame {
   FrameRef buffer;  // width * height floats, row-major
   uint16_t width{0};
@@ -193,6 +202,7 @@ struct RadiometricFrame {
   uint32_t timestamp_ms{0};  // capture time of the newest data in the frame
   uint32_t sequence{0};
   Annotations annotations;
+  FrameStats stats;  // of these exact pixels; a stage that changes them leaves it invalid
   const float *temps() const { return reinterpret_cast<const float *>(this->buffer.data()); }
   float *temps() { return reinterpret_cast<float *>(this->buffer.data()); }
 };

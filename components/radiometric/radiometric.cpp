@@ -64,8 +64,11 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
   }
   const uint32_t t0 = micros();
   video::RadiometricFrame out;
-  if (!this->processor_.filters_active() && this->processor_.analyze(in.temps(), in.width, in.height)) {
-    // Nothing to change: pass the input on (sinks only read frames).
+  if (!this->processor_.filters_active() &&
+      (this->processor_.adopt(in.stats, in.temps(), in.width, in.height) ||
+       this->processor_.analyze(in.temps(), in.width, in.height))) {
+    // Nothing to change: pass the input on (sinks only read frames), with
+    // the source's statistics if it had them.
     out = in;
     out.annotations = video::Annotations();
   } else {
