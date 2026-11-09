@@ -227,7 +227,8 @@ class TemperatureTable {
 };
 
 // Converts `count` raw words (masked to 14 bits) to temperatures through a
-// table built over their range. Returns false if the calibration is unusable.
+// table built over their range: the camera's reported min/max, extended for
+// any pixel outside it. Returns false if the calibration is unusable.
 bool raw_to_temperatures(const uint16_t *raw, size_t count, const Metadata &m, const Environment &env,
                          TemperatureTable &table, float *out);
 

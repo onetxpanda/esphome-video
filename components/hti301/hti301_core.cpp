@@ -286,15 +286,28 @@ bool raw_to_temperatures(const uint16_t *raw, size_t count, const Metadata &m, c
                          TemperatureTable &table, float *out) {
   if (count == 0 || !table.prepare(m, env))
     return false;
-  uint16_t lo = RAW_MASK, hi = 0;
-  for (size_t i = 0; i < count; i++) {
-    const uint16_t v = raw[i] & RAW_MASK;
-    lo = v < lo ? v : lo;
-    hi = v > hi ? v : hi;
+  // Start from the camera's own min/max of the frame (metadata), which saves
+  // a pass over it; a pixel outside extends the table, so the result does
+  // not depend on those figures being right.
+  uint16_t lo, hi;
+  if (m.min_raw <= m.max_raw && m.max_raw <= RAW_MASK) {
+    lo = m.min_raw;
+    hi = m.max_raw;
+  } else {
+    lo = hi = raw[0] & RAW_MASK;
   }
   table.build(lo, hi);
-  for (size_t i = 0; i < count; i++)
-    out[i] = table.lookup(raw[i]);
+  for (size_t i = 0; i < count; i++) {
+    const uint16_t v = raw[i] & RAW_MASK;
+    if (v < lo) {
+      table.build(v, lo - 1);
+      lo = v;
+    } else if (v > hi) {
+      table.build(hi + 1, v);
+      hi = v;
+    }
+    out[i] = table.lookup(v);
+  }
   return true;
 }
 

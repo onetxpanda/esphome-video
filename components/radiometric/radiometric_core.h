@@ -50,6 +50,16 @@ class Processor {
   bool process(const float *in, float *out, uint16_t width, uint16_t height);
   const Stats &stats() const { return this->stats_; }
 
+  // True when a filter changes pixels (outlier filter, averaging or median).
+  bool filters_active() const {
+    return this->opt_.outlier_level > 0.0f || this->opt_.temporal_frames > 1 || this->opt_.median_filter;
+  }
+  // With no filter active: the statistics process() would compute, from one
+  // read-only pass over `in`, so the frame itself can be passed on as it is.
+  // False (stats untouched) if a pixel is invalid and needs process() to
+  // repair it, or memory for the median is missing.
+  bool analyze(const float *in, uint16_t width, uint16_t height);
+
  protected:
   Options opt_;
   uint16_t w_{0}, h_{0};
