@@ -1,4 +1,5 @@
 // Unit tests for the radiometric processor and the CPU ISP.
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -321,6 +322,37 @@ static void test_map_direct() {
   }
 }
 
+// The palette index for every value, against its definition: (t - lo) * k
+// rounded half up, 0 at or below the range and for NaN, 255 at or above it.
+static void test_index_rule() {
+  std::vector<float> e;
+  for (int i = -4000; i <= 60000; i++)
+    e.push_back(static_cast<float>(i) / 100.0f);
+  const float edges[] = {0.0f, -0.0f, 0.49999f, 0.5f, 0.50001f, 254.49f, 254.5f, 254.51f, 255.0f, 255.01f,
+                         INFINITY, -INFINITY, NAN, 1e30f, -1e30f, 15.0f, 40.0f};
+  for (float v : edges)
+    e.push_back(v);
+  const float ranges[][2] = {{0.0f, 255.0f}, {15.0f, 40.0f}, {-20.0f, 450.0f}};
+  for (const auto &r : ranges) {
+    isp::Options o;
+    o.range_min = r[0];
+    o.range_max = r[1];
+    o.format = video::ImageFormat::GRAY8;
+    const float k = 255.0f / std::max(o.range_max - o.range_min, 1e-3f);
+    isp::CpuIsp c;
+    c.set_palette(isp::make_palette(isp::Palette::WHITE_HOT));
+    CHECK(c.tone_map(e.data(), static_cast<uint16_t>(e.size() / 64), 64, o));
+    bool same = true;
+    const size_t n = (e.size() / 64) * 64;
+    for (size_t i = 0; i < n; i++) {
+      const float v = (e[i] - o.range_min) * k;
+      const uint8_t want = !(v > 0.0f) ? 0 : v >= 255.0f ? 255 : static_cast<uint8_t>(v + 0.5f);
+      same = same && c.indices()[i] == want;
+    }
+    CHECK(same);
+  }
+}
+
 // adopt() takes a source's own statistics in place of analyze(): the same
 // results, and it declines whenever analyze() would have to look at pixels.
 static void test_adopt() {
@@ -392,6 +424,7 @@ static void test_adopt() {
 int main() {
   test_palettes();
   test_map_direct();
+  test_index_rule();
   test_adopt();
   test_analyze_matches_process();
   test_valid_range_and_median();

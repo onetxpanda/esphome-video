@@ -27,12 +27,11 @@ void CpuIsp::set_palette(const std::array<Rgb, 256> &palette) {
 // The palette index for value t: (t - lo) * k, rounded and clamped; NaN is 0.
 // Always inlined: ESPHome builds for size, which would otherwise make this a
 // call per pixel.
+// Branch-free: much of a scene often lies outside the colour range, which
+// makes clamping branches unpredictable. fmax returns the other operand for
+// NaN, so NaN becomes 0; on the P4 fmin and fmax are single instructions.
 static inline __attribute__((always_inline)) uint8_t to_index(float t, float lo, float k) {
-  const float v = (t - lo) * k;
-  if (!(v > 0.0f))  // also NaN
-    return 0;
-  if (v >= 255.0f)
-    return 255;
+  const float v = std::fmin(std::fmax((t - lo) * k, 0.0f), 255.0f);
   return static_cast<uint8_t>(v + 0.5f);
 }
 
