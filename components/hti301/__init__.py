@@ -37,6 +37,7 @@ from esphome.const import (
     DEVICE_CLASS_RUNNING,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
+from esphome.core import HexInt
 
 CODEOWNERS = ["@onetxpanda"]
 DEPENDENCIES = ["usb_host", "esp32"]
@@ -125,6 +126,12 @@ async def to_code(config):
     # packets wait there, not get dropped, while its DMA is held up.
     add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_IN", True)
     add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED", False)
+    # Cache write-backs before DMA (H.264, JPEG, PPA) run with interrupts off
+    # and hold a lock the USB driver takes; a whole frame's lasts longer than
+    # the 125 us the USB interrupt has to start the next transfer. In 8 KB
+    # pieces, each is short.
+    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS", True)
+    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN", HexInt(0x2000))
     # The USB interrupt path in IRAM, so processing cannot make it late.
     add_idf_component(name=USB_IRAM_COMPONENT, path=str(Path(__file__).parent / USB_IRAM_COMPONENT))
     var = await usb_host.register_usb_client(config)

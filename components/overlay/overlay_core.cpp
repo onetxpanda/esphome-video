@@ -152,5 +152,44 @@ std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &ma
   return placed;
 }
 
+const std::vector<MarkHold::Shown> &MarkHold::update(const video::Annotations &a, uint32_t kinds, uint32_t now_ms,
+                                                     uint32_t hold_ms) {
+  bool seen[SLOTS] = {};
+  this->shown_.clear();
+  for (uint8_t i = 0; i < a.count; i++) {
+    const video::Annotation &an = a.items[i];
+    const auto k = static_cast<uint8_t>(an.kind);
+    if (k >= 32 || !(kinds & (1u << k)))
+      continue;
+    const int x = static_cast<int>(an.x), y = static_cast<int>(an.y);
+    if (k >= SLOTS || seen[k]) {
+      this->shown_.push_back(Shown{x, y, an.value, an.kind});  // no slot: as it comes
+      continue;
+    }
+    seen[k] = true;
+    Slot &s = this->slots_[k];
+    // Moved (or new): position and value now. In place: the value once per hold time.
+    if (!s.valid || s.x != x || s.y != y || now_ms - s.since_ms >= hold_ms) {
+      s.valid = true;
+      s.x = x;
+      s.y = y;
+      s.value = an.value;
+      s.since_ms = now_ms;
+    }
+    this->shown_.push_back(Shown{s.x, s.y, s.value, an.kind});
+  }
+  // A kind missing from this frame starts afresh when it returns.
+  for (size_t k = 0; k < SLOTS; k++) {
+    if (!seen[k])
+      this->slots_[k].valid = false;
+  }
+  return this->shown_;
+}
+
+void MarkHold::reset() {
+  for (auto &s : this->slots_)
+    s.valid = false;
+}
+
 }  // namespace overlay
 }  // namespace esphome

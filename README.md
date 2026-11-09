@@ -167,8 +167,9 @@ a YAML list, for example one chain per camera.
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear), `scaler` (cpu, ppa). Controls: `range_min`,
   `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`.
-- **overlay**: `marks` (min, max, center), `hold` (how often mark positions
-  may move), `unit` (C, F), `enabled`. Controls: `enabled`, `unit`.
+- **overlay**: `marks` (min, max, center), `hold` (how often a mark's value
+  is refreshed while the mark stays put; default 1 s), `unit` (C, F),
+  `enabled`. Controls: `enabled`, `unit`.
 - **h264_encoder**: `source` (list), `fps` (default: measured from the
   source), `gop` (default: one keyframe per second), `bitrate` (default:
   automatic), `qp_min`, `qp_max`. Select platform: switches the active source.
@@ -267,7 +268,11 @@ traffic. The USB interrupt starts each queued transfer as the one before it
 ends and has one 125 us microframe to do it; ESP-IDF runs most of that path
 from flash, through the cache that frame processing keeps filling with PSRAM
 data. A linker fragment (`hti301/hti301_usb_iram`, about 4 KB of IRAM) moves
-it to IRAM, so the interrupt is not late. With `log_timing`, lost packets are split into those the controller
+it to IRAM, so the interrupt is not late. Cache write-backs before DMA
+(H.264, JPEG, PPA) run with interrupts off and hold a lock the USB driver
+takes, so the component has ESP-IDF do them in 8 KB pieces
+(`CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS`); a whole frame at once would
+outlast the microframe. With `log_timing`, lost packets are split into those the controller
 did not run in time (and how many of them opened a transfer, which means the
 next transfer started late) and those received with errors. Commands (mode, range, palette,
 calibrate) are written to the camera terminal's Zoom (Absolute) control. The
@@ -307,7 +312,10 @@ Annotations are moved through the same mirroring and scaling as the pixels.
 `overlay` draws only its own pixels: a reticle and a label per annotation,
 white with a one-pixel black outline. Each label goes below, above, right or
 left of its reticle, taking the first position that is inside the image and
-clear of other labels and reticles. Because it draws into the frame it
+clear of other labels and reticles. A mark moves as soon as its annotation
+does, and its label shows the new value at once; while the mark stays on the
+same pixel, its value is refreshed once per `hold`, so the label does not
+change with every frame's noise. Because it draws into the frame it
 receives, it must be its source's only consumer. A source with an overlay
 and another consumer fails at setup with an error. Attach other consumers to
 the overlay instead.

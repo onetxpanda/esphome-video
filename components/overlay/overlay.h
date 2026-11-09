@@ -2,8 +2,9 @@
 
 // Draws a frame's annotations (reticles with value labels) into the image
 // and passes it on. Draws in place, so it must be its source's only sink.
-// Mark positions follow the annotations at most once per hold time, so the
-// marks don't jump about with sensor noise.
+// A mark moves as soon as its annotation does, with its new value; while it
+// stays put, its value is refreshed once per hold time, so the label doesn't
+// change with every frame's noise.
 
 #include <atomic>
 #include <mutex>
@@ -46,9 +47,7 @@ class Overlay : public Component, public video::ImageSink, public video::ImageSo
   std::atomic<uint8_t> unit_{0};
 
   // Source's task only.
-  video::Annotations held_;
-  uint32_t held_ms_{0};
-  bool have_held_{false};
+  MarkHold hold_;
   uint16_t last_w_{0}, last_h_{0};
   Style style_;
   std::vector<Mark> marks_;
