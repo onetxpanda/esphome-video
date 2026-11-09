@@ -1,0 +1,34 @@
+# The USB host interrupt starts each queued isochronous transfer when the one
+# before it ends, and has one 125 us microframe to do so. ESP-IDF keeps most
+# of that path in flash, behind the cache that PSRAM traffic also uses: while
+# frames are processed the code gets evicted, the interrupt runs late, and the
+# first packet of the next transfer is never fetched. These are the functions
+# from the interrupt to the channel start, the rest of the interrupt, and the
+# two task-side calls that hold the driver's lock the interrupt waits on.
+# A name a later ESP-IDF inlines away is skipped.
+
+[mapping:hti301_usb_iram]
+archive: libusb.a
+entries:
+    hcd_dwc:intr_hdlr_main (noflash)
+    hcd_dwc:_buffer_done (noflash)
+    hcd_dwc:_buffer_can_exec (noflash)
+    hcd_dwc:_buffer_parse (noflash)
+    hcd_dwc:cache_sync_data_buffer (noflash)
+    hcd_dwc:cache_sync_frame_list (noflash)
+    hcd_dwc:cache_sync_xfer_descriptor_list (noflash)
+    hcd_dwc:usb_dwc_hal_xfer_desc_fill (noflash)
+    hcd_dwc:usb_dwc_hal_xfer_desc_parse (noflash)
+    hcd_dwc:hcd_urb_enqueue (noflash)
+    hcd_dwc:hcd_urb_dequeue (noflash)
+    usbh:epN_pipe_callback (noflash)
+    usb_host:endpoint_callback (noflash)
+    usb_host:_unblock_client (noflash)
+
+[mapping:hti301_usb_hal_iram]
+archive: libhal.a
+entries:
+    usb_dwc_hal:usb_dwc_hal_decode_intr (noflash)
+    usb_dwc_hal:usb_dwc_hal_get_chan_pending_intr (noflash)
+    usb_dwc_hal:usb_dwc_hal_chan_decode_intr (noflash)
+    usb_dwc_hal:usb_dwc_hal_chan_activate (noflash)
