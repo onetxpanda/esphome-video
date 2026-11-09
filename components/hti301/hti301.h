@@ -223,8 +223,11 @@ class HTI301 : public usb_host::USBClient,
   uint32_t sequence_{0};
 
   // Statistics (any thread writes, main loop reads and resets).
-  std::atomic<uint32_t> frames_{0}, incomplete_{0}, settled_{0}, replaced_{0}, packets_lost_{0},
-      transfer_errors_{0}, no_buffer_{0}, bad_calibration_{0}, process_us_{0}, processed_{0}, convert_us_{0};
+  // Lost packets: those the controller never ran (skipped_), how many of them opened a transfer
+  // (skipped_first_: the next transfer started late), the rest arrived with errors.
+  std::atomic<uint32_t> frames_{0}, incomplete_{0}, settled_{0}, replaced_{0}, packets_lost_{0}, skipped_{0},
+      skipped_first_{0}, transfer_errors_{0}, no_buffer_{0}, bad_calibration_{0}, process_us_{0}, processed_{0},
+      convert_us_{0};
   // Bus diagnosis: one control transfer of our own, waited for on the main loop.
   usb_transfer_t *diag_xfer_{nullptr};
   SemaphoreHandle_t diag_sem_{nullptr};

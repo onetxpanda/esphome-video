@@ -253,7 +253,12 @@ negotiates the stream with probe/commit, selects the isochronous alternate
 setting and queues the transfers, pausing between steps as that driver does.
 A frame is 384x292 16-bit words: 288 image rows and 4 rows of camera
 metadata. A frame counts only if every packet arrived and it has exactly the
-negotiated size; others are dropped. Commands (mode, range, palette,
+negotiated size; others are dropped. The component sets the USB controller's
+FIFO split to favour received data (`CONFIG_USB_HOST_HW_BUFFER_BIAS_IN`):
+packets wait there while the controller's DMA is held up by other memory
+traffic. With `log_timing`, lost packets are split into those the controller
+did not run in time (and how many of them opened a transfer, which means the
+next transfer started late) and those received with errors. Commands (mode, range, palette,
 calibrate) are written to the camera terminal's Zoom (Absolute) control. The
 camera cannot report its mode, so after every stream start the component
 sends the configured mode, range and palette, and passes frames on only

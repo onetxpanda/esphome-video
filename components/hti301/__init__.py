@@ -6,7 +6,11 @@ ESP32-P4 (USB 2.0 high speed)."""
 
 import esphome.codegen as cg
 from esphome.components import binary_sensor, text_sensor, usb_host
-from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
+from esphome.components.esp32 import (
+    VARIANT_ESP32P4,
+    add_idf_sdkconfig_option,
+    only_on_variant,
+)
 from esphome.components.video_controls import (
     button_control,
     new_button_control,
@@ -111,6 +115,11 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    # A 780-byte isochronous packet arrives every 125 us. Give the USB
+    # controller's receive FIFO the most room (3.3 KB rather than 2.5 KB) so
+    # packets wait there, not get dropped, while its DMA is held up.
+    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_IN", True)
+    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED", False)
     var = await usb_host.register_usb_client(config)
     mode = MODES.index(config[CONF_MODE])
     rng = RANGES.index(config[CONF_RANGE])
