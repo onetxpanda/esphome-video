@@ -15,10 +15,19 @@
 namespace esphome {
 namespace radiometric {
 
+static constexpr float MIN_VALID_C = -40.0f;
+static constexpr float MAX_VALID_C = 300.0f;
+
 struct Options {
   uint8_t temporal_frames{1};  // 1 = off; at most MAX_TEMPORAL
   bool median_filter{false};
   float outlier_level{10.0f};  // degrees; <= 0 disables
+  // Readings outside this range (or not finite) are invalid and repaired
+  // from their neighbours; the defaults suit the MLX90640.
+  float valid_min{MIN_VALID_C};
+  float valid_max{MAX_VALID_C};
+  // Whether to compute the median statistic (a full sort-like pass); NaN when not.
+  bool median_stat{true};
 };
 
 struct Stats {
@@ -28,8 +37,6 @@ struct Stats {
 };
 
 static constexpr uint8_t MAX_TEMPORAL = 8;
-static constexpr float MIN_VALID_C = -40.0f;
-static constexpr float MAX_VALID_C = 300.0f;
 
 class Processor {
  public:

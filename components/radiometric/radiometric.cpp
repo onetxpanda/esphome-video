@@ -14,6 +14,7 @@ static constexpr size_t POOL_FRAMES = 3;
 
 void Radiometric::setup() {
   std::lock_guard<std::mutex> lock(this->mutex_);
+  this->options_.median_stat = this->median_sensor_ != nullptr;  // only computed for its sensor
   this->options_changed_ = true;  // applied by the source's task with the first frame
 }
 

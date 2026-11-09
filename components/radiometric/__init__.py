@@ -34,6 +34,8 @@ CONF_MEAN = "mean"
 CONF_MEDIAN = "median"
 CONF_CENTER = "center"
 CONF_LOG_TIMING = "log_timing"
+CONF_VALID_MIN = "valid_min"
+CONF_VALID_MAX = "valid_max"
 SENSORS = [CONF_MIN, CONF_MAX, CONF_MEAN, CONF_MEDIAN, CONF_CENTER]
 
 radiometric_ns = cg.esphome_ns.namespace("radiometric")
@@ -48,7 +50,14 @@ _TEMP = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 
-CONFIG_SCHEMA = cv.Schema(
+
+def _validate(config):
+    if config[CONF_VALID_MIN] >= config[CONF_VALID_MAX]:
+        raise cv.Invalid(f"{CONF_VALID_MIN} must be below {CONF_VALID_MAX}")
+    return config
+
+
+CONFIG_SCHEMA = cv.All(cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(Radiometric),
         cv.Required(CONF_SOURCE): cv.use_id(RadiometricSource),
@@ -67,8 +76,12 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         **{cv.Optional(k): _TEMP for k in SENSORS},
         cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
+        # Readings outside this range are invalid and repaired from their
+        # neighbours. The defaults suit the MLX90640 (-40..300 C).
+        cv.Optional(CONF_VALID_MIN, default=-40.0): cv.float_range(min=-273, max=2000),
+        cv.Optional(CONF_VALID_MAX, default=300.0): cv.float_range(min=-273, max=2000),
     }
-).extend(cv.polling_component_schema("1s"))
+).extend(cv.polling_component_schema("1s")), _validate)
 
 
 async def to_code(config):
@@ -81,6 +94,7 @@ async def to_code(config):
     cg.add(var.set_median_filter(config[CONF_MEDIAN_FILTER]))
     cg.add(var.set_outlier_level(config[CONF_OUTLIER_LEVEL]))
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
+    cg.add(var.set_valid_range(config[CONF_VALID_MIN], config[CONF_VALID_MAX]))
     for key in SENSORS:
         if key in config:
             sens = await sensor.new_sensor(config[key])
