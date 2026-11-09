@@ -4,10 +4,13 @@ A radiometric source (temperatures, in radiometric mode) and an image source
 (the camera's own processed image, in processed mode). Needs `usb_host:` on an
 ESP32-P4 (USB 2.0 high speed)."""
 
+from pathlib import Path
+
 import esphome.codegen as cg
 from esphome.components import binary_sensor, text_sensor, usb_host
 from esphome.components.esp32 import (
     VARIANT_ESP32P4,
+    add_idf_component,
     add_idf_sdkconfig_option,
     only_on_variant,
 )
@@ -56,6 +59,8 @@ CONF_LOG_TIMING = "log_timing"
 
 VID = 0x1514
 PID = 0x0001
+
+USB_IRAM_COMPONENT = "hti301_usb_iram"  # an ESP-IDF component in this folder
 
 MODES = ["radiometric", "processed"]
 MODE_LABELS = ["Radiometric", "Processed"]
@@ -120,6 +125,8 @@ async def to_code(config):
     # packets wait there, not get dropped, while its DMA is held up.
     add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_IN", True)
     add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED", False)
+    # The USB interrupt path in IRAM, so processing cannot make it late.
+    add_idf_component(name=USB_IRAM_COMPONENT, path=str(Path(__file__).parent / USB_IRAM_COMPONENT))
     var = await usb_host.register_usb_client(config)
     mode = MODES.index(config[CONF_MODE])
     rng = RANGES.index(config[CONF_RANGE])

@@ -256,7 +256,11 @@ metadata. A frame counts only if every packet arrived and it has exactly the
 negotiated size; others are dropped. The component sets the USB controller's
 FIFO split to favour received data (`CONFIG_USB_HOST_HW_BUFFER_BIAS_IN`):
 packets wait there while the controller's DMA is held up by other memory
-traffic. With `log_timing`, lost packets are split into those the controller
+traffic. The USB interrupt starts each queued transfer as the one before it
+ends and has one 125 us microframe to do it; ESP-IDF runs most of that path
+from flash, through the cache that frame processing keeps filling with PSRAM
+data. A linker fragment (`hti301/hti301_usb_iram`, about 4 KB of IRAM) moves
+it to IRAM, so the interrupt is not late. With `log_timing`, lost packets are split into those the controller
 did not run in time (and how many of them opened a transfer, which means the
 next transfer started late) and those received with errors. Commands (mode, range, palette,
 calibrate) are written to the camera terminal's Zoom (Absolute) control. The
