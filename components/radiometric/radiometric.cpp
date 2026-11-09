@@ -55,26 +55,6 @@ void Radiometric::set_outlier_level(float v) {
 bool Radiometric::wants_frames() const { return this->has_sensors_() || this->sinks_.any_wants(); }
 
 void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
-  const size_t bytes = sizeof(float) * in.width * in.height;
-  if (this->pool_ == nullptr || this->pool_size_ < bytes) {
-    // First frame (or a larger sensor): size the pool to the source.
-    this->pool_.reset();
-#ifdef USE_ESP32
-    this->pool_ = std::make_unique<video::FramePool>(POOL_FRAMES, bytes, 64, video::dma_allocator());
-#else
-    this->pool_ = std::make_unique<video::FramePool>(POOL_FRAMES, bytes);
-#endif
-    this->pool_size_ = this->pool_->ok() ? bytes : 0;
-  }
-  video::RadiometricFrame out;
-  out.buffer = this->pool_->acquire();
-  if (!out.buffer)
-    return;  // all buffers held downstream: drop this frame
-  out.width = in.width;
-  out.height = in.height;
-  out.timestamp_ms = in.timestamp_ms;
-  out.sequence = in.sequence;
-
   {
     std::lock_guard<std::mutex> lock(this->mutex_);
     if (this->options_changed_) {
@@ -83,12 +63,37 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
     }
   }
   const uint32_t t0 = micros();
-  if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
-    if (!this->memory_error_logged_) {
-      ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);
-      this->memory_error_logged_ = true;
+  video::RadiometricFrame out;
+  if (!this->processor_.filters_active() && this->processor_.analyze(in.temps(), in.width, in.height)) {
+    // Nothing to change: pass the input on (sinks only read frames).
+    out = in;
+    out.annotations = video::Annotations();
+  } else {
+    const size_t bytes = sizeof(float) * in.width * in.height;
+    if (this->pool_ == nullptr || this->pool_size_ < bytes) {
+      // First frame (or a larger sensor): size the pool to the source.
+      this->pool_.reset();
+#ifdef USE_ESP32
+      this->pool_ = std::make_unique<video::FramePool>(POOL_FRAMES, bytes, 64, video::dma_allocator());
+#else
+      this->pool_ = std::make_unique<video::FramePool>(POOL_FRAMES, bytes);
+#endif
+      this->pool_size_ = this->pool_->ok() ? bytes : 0;
     }
-    return;
+    out.buffer = this->pool_->acquire();
+    if (!out.buffer)
+      return;  // all buffers held downstream: drop this frame
+    out.width = in.width;
+    out.height = in.height;
+    out.timestamp_ms = in.timestamp_ms;
+    out.sequence = in.sequence;
+    if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
+      if (!this->memory_error_logged_) {
+        ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);
+        this->memory_error_logged_ = true;
+      }
+      return;
+    }
   }
   this->process_us_ += micros() - t0;
   this->processed_++;

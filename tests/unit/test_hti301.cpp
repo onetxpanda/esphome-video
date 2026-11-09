@@ -372,6 +372,28 @@ static void test_temperatures() {
     same = same && out[i] == t2.temperature(raw[i] & RAW_MASK);
   CHECK(same);
 
+  // The table range starts from the camera's reported min/max and is
+  // extended for pixels outside it: exact whether that range is right, too
+  // narrow, too wide, or nonsense.
+  {
+    std::vector<uint16_t> img(2000);
+    for (size_t i = 0; i < img.size(); i++)
+      img[i] = static_cast<uint16_t>(4200 + (i * 37) % 4000);
+    const uint16_t ranges[][2] = {{4200, 8199}, {6000, 6100}, {100, 16000}, {9000, 3000}, {20000, 30000}};
+    for (const auto &rg : ranges) {
+      Metadata mr = m;
+      mr.min_raw = rg[0];
+      mr.max_raw = rg[1];
+      std::vector<float> res(img.size());
+      TemperatureTable tt;
+      CHECK(raw_to_temperatures(img.data(), img.size(), mr, env, tt, res.data()));
+      bool exact = true;
+      for (size_t i = 0; i < img.size(); i++)
+        exact = exact && res[i] == tt.temperature(img[i]);
+      CHECK(exact);
+    }
+  }
+
   // Unusable calibration is refused.
   Cal bad = c;
   bad.c1 = 0.0f;

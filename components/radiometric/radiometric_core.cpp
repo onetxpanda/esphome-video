@@ -19,6 +19,51 @@ void Processor::set_options(const Options &o) {
   this->opt_ = n;
 }
 
+bool Processor::analyze(const float *in, uint16_t width, uint16_t height) {
+  const size_t n = static_cast<size_t>(width) * height;
+  if (n == 0 || in == nullptr || (this->opt_.median_stat && !this->tmp_.ensure(n)))
+    return false;
+  const float lo = this->opt_.valid_min, hi = this->opt_.valid_max;
+  size_t mi = 0, ma = 0;
+  double sum = 0;
+  for (int r = 0; r < height; r++) {
+    const size_t row = static_cast<size_t>(r) * width;
+    float row_sum = 0.0f;
+    for (size_t i = row; i < row + width; i++) {
+      const float v = in[i];
+      if (!(std::isfinite(v) && v >= lo && v <= hi))
+        return false;
+      if (v < in[mi])
+        mi = i;
+      if (v > in[ma])
+        ma = i;
+      row_sum += v;
+    }
+    sum += row_sum;
+  }
+  Stats s;
+  s.valid = true;
+  s.min = in[mi];
+  s.max = in[ma];
+  s.min_x = static_cast<uint16_t>(mi % width);
+  s.min_y = static_cast<uint16_t>(mi / width);
+  s.max_x = static_cast<uint16_t>(ma % width);
+  s.max_y = static_cast<uint16_t>(ma / width);
+  s.mean = static_cast<float>(sum / n);
+  if (this->opt_.median_stat) {
+    std::memcpy(this->tmp_.data(), in, n * sizeof(float));
+    float *t = this->tmp_.data();
+    std::nth_element(t, t + n / 2, t + n);
+    const float upper = t[n / 2];
+    s.median = n % 2 == 0 ? (*std::max_element(t, t + n / 2) + upper) / 2.0f : upper;
+  } else {
+    s.median = NAN;
+  }
+  s.center = in[(height / 2) * width + width / 2];
+  this->stats_ = s;
+  return true;
+}
+
 bool Processor::process(const float *in, float *out, uint16_t width, uint16_t height) {
   const size_t n = static_cast<size_t>(width) * height;
   if (n == 0 || in == nullptr || out == nullptr)

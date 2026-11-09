@@ -249,8 +249,44 @@ static void test_valid_range_and_median() {
   CHECK(!std::isnan(out[10 * W + 10]));
 }
 
+// With no filter active, analyze() gives exactly process()'s statistics in
+// one read-only pass, and refuses a frame that needs repair.
+static void test_analyze_matches_process() {
+  const int w = 384, h = 288, n = w * h;
+  std::vector<float> t(n), out(n);
+  uint32_t seed = 12345;
+  for (int i = 0; i < n; i++) {
+    seed = seed * 1103515245u + 12345u;
+    t[i] = 15.0f + static_cast<float>((seed >> 8) % 3000) / 100.0f;  // 15..45 C
+  }
+  radiometric::Options o;
+  o.outlier_level = 0;
+  for (bool median : {false, true}) {
+    o.median_stat = median;
+    radiometric::Processor a, b;
+    a.set_options(o);
+    b.set_options(o);
+    CHECK(!a.filters_active());
+    CHECK(a.analyze(t.data(), w, h));
+    CHECK(b.process(t.data(), out.data(), w, h));
+    const auto &sa = a.stats(), &sb = b.stats();
+    CHECK(sa.valid && sa.min == sb.min && sa.max == sb.max && sa.mean == sb.mean && sa.center == sb.center);
+    CHECK(sa.min_x == sb.min_x && sa.min_y == sb.min_y && sa.max_x == sb.max_x && sa.max_y == sb.max_y);
+    CHECK(median ? sa.median == sb.median : (std::isnan(sa.median) && std::isnan(sb.median)));
+    CHECK(out == t);  // no filter: process() changed nothing either
+  }
+  t[1000] = NAN;
+  radiometric::Processor p;
+  p.set_options(o);
+  CHECK(!p.analyze(t.data(), w, h));
+  o.outlier_level = 5.0f;
+  p.set_options(o);
+  CHECK(p.filters_active());
+}
+
 int main() {
   test_palettes();
+  test_analyze_matches_process();
   test_valid_range_and_median();
   test_radiometric();
   test_isp();

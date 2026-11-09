@@ -40,7 +40,7 @@ static constexpr uint32_t DELAY_AFTER_ALT = 200;
 static constexpr uint32_t DELAY_BEFORE_RESTART = 500;
 
 static constexpr size_t RAW_FRAMES = 3;  // being assembled, waiting, being processed
-static constexpr size_t RAD_FRAMES = 3;
+static constexpr size_t RAD_FRAMES = 4;  // stages after it may pass a frame on and hold it
 static constexpr size_t IMG_FRAMES = 4;      // encoders keep a frame while they work on it
 static constexpr uint32_t STALL_MS = 3000;   // no complete frame for this long: restart the stream
 static constexpr uint32_t STREAMING_MS = 2000;  // the streaming sensor is on while frames arrive this often
