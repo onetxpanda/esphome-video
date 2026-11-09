@@ -35,6 +35,11 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
   void set_temporal_frames(float n);
   void set_median_filter(bool v);
   void set_outlier_level(float v);
+  // Configuration (before setup).
+  void set_valid_range(float lo, float hi) {
+    this->options_.valid_min = lo;
+    this->options_.valid_max = hi;
+  }
 
   void set_min_sensor(sensor::Sensor *s) { this->min_sensor_ = s; }
   void set_max_sensor(sensor::Sensor *s) { this->max_sensor_ = s; }

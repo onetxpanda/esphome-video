@@ -7,7 +7,7 @@
 namespace esphome {
 namespace radiometric {
 
-static inline bool valid_temp(float t) { return std::isfinite(t) && t >= MIN_VALID_C && t <= MAX_VALID_C; }
+
 
 void Processor::set_options(const Options &o) {
   Options n = o;
@@ -35,10 +35,12 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   }
   float *w = this->work_.data();
   std::memcpy(w, in, n * sizeof(float));
+  const float lo = this->opt_.valid_min, hi = this->opt_.valid_max;
+  auto valid_temp = [lo, hi](float t) { return std::isfinite(t) && t >= lo && t <= hi; };
 
-  // 1. Invalid pixels -> mean of valid 3x3 neighbours.
-  std::memcpy(this->tmp_.data(), w, n * sizeof(float));
-  const float *src = this->tmp_.data();
+  // 1. Invalid pixels -> mean of valid 3x3 neighbours, read from the input
+  // (`in` may alias `out`, which is written only at the end).
+  const float *src = in;
   for (int r = 0; r < height; r++) {
     for (int c = 0; c < width; c++) {
       if (valid_temp(src[r * width + c]))
@@ -88,6 +90,7 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   // 4. 3x3 median, edges replicated.
   if (this->opt_.median_filter) {
     std::memcpy(this->tmp_.data(), w, n * sizeof(float));
+    const float *med = this->tmp_.data();  // the frame before this filter
     float win[9];
     for (int r = 0; r < height; r++)
       for (int c = 0; c < width; c++) {
@@ -95,7 +98,7 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
         for (int dr = -1; dr <= 1; dr++) {
           const int rr = std::min(std::max(r + dr, 0), height - 1);
           for (int dc = -1; dc <= 1; dc++)
-            win[k++] = src[rr * width + std::min(std::max(c + dc, 0), width - 1)];
+            win[k++] = med[rr * width + std::min(std::max(c + dc, 0), width - 1)];
         }
         std::nth_element(win, win + 4, win + 9);
         w[r * width + c] = win[4];
@@ -106,13 +109,20 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   Stats s;
   s.valid = true;
   size_t mi = 0, ma = 0;
+  // Rows summed in float, rows added in double: the ESP32-P4's FPU is single
+  // precision, so a double add per pixel would be emulated in software.
   double sum = 0;
-  for (size_t i = 0; i < n; i++) {
-    if (w[i] < w[mi])
-      mi = i;
-    if (w[i] > w[ma])
-      ma = i;
-    sum += w[i];
+  for (int r = 0; r < height; r++) {
+    const size_t row = static_cast<size_t>(r) * width;
+    float row_sum = 0.0f;
+    for (size_t i = row; i < row + width; i++) {
+      if (w[i] < w[mi])
+        mi = i;
+      if (w[i] > w[ma])
+        ma = i;
+      row_sum += w[i];
+    }
+    sum += row_sum;
   }
   s.min = w[mi];
   s.max = w[ma];
@@ -121,15 +131,19 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   s.max_x = static_cast<uint16_t>(ma % width);
   s.max_y = static_cast<uint16_t>(ma / width);
   s.mean = static_cast<float>(sum / n);
-  std::memcpy(this->tmp_.data(), w, n * sizeof(float));
-  float *t = this->tmp_.data();
-  std::nth_element(t, t + n / 2, t + n);
-  const float upper = t[n / 2];
-  if (n % 2 == 0) {
-    const float lower = *std::max_element(t, t + n / 2);
-    s.median = (lower + upper) / 2.0f;
+  if (this->opt_.median_stat) {
+    std::memcpy(this->tmp_.data(), w, n * sizeof(float));
+    float *t = this->tmp_.data();
+    std::nth_element(t, t + n / 2, t + n);
+    const float upper = t[n / 2];
+    if (n % 2 == 0) {
+      const float lower = *std::max_element(t, t + n / 2);
+      s.median = (lower + upper) / 2.0f;
+    } else {
+      s.median = upper;
+    }
   } else {
-    s.median = upper;
+    s.median = NAN;
   }
   s.center = w[(height / 2) * width + width / 2];
   this->stats_ = s;

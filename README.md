@@ -154,7 +154,12 @@ a YAML list, for example one chain per camera.
   (shutter calibration), and a `restart_usb` button (powers the USB port off
   and on, so everything on it re-enumerates).
 - **radiometric**: `temporal_frames` (1–8; 1 = off), `median_filter`,
-  `outlier_level` (degrees; 0 = off), `update_interval` for the sensors.
+  `outlier_level` (degrees; 0 = off), `valid_min` and `valid_max` (readings
+  outside are repaired; default −40..300 °C), `update_interval` for the
+  sensors. The filters are meant for the MLX90640's noisy low-resolution
+  frames; for a camera that does its own correction (the HTI-301) set
+  `outlier_level: 0` and leave the others off. The median statistic is
+  computed only when its sensor is configured.
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
   `temporal_frames`, `median_filter`, `outlier_level`.
 - **isp**: `scale` (1–20), `format` (RGB565_LE, RGB565_BE, RGB888, GRAY8),
@@ -236,7 +241,7 @@ Nothing upstream does work for nobody: a source asks its sinks
 
 ### Processing
 
-`radiometric` repairs invalid pixels (non-finite, or outside −40..300 °C)
+`radiometric` repairs invalid pixels (non-finite, or outside `valid_min`..`valid_max`)
 from their valid neighbours. Then come the outlier filter (a pixel differing
 from both row neighbours by at least `outlier_level` becomes their average),
 the running average and the 3x3 median. Statistics are computed last, in
@@ -267,9 +272,9 @@ constants) and the scene parameters stored in it. The conversion is the one
 in ht301_hacklib, including atmospheric transmission over the distance. For
 each frame a table is built over the frame's range of raw values, and every
 pixel is looked up in it. In processed mode the image rows are full-range
-YUYV, converted to RGB565. `radiometric` treats readings above 300 °C as
-invalid, so in the high range hotter pixels are repaired from their
-neighbours.
+YUYV, converted to RGB565. For the high range, raise `radiometric`'s
+`valid_max` (default 300 °C) above 450 °C so hot pixels are not treated as
+invalid.
 
 `isp` tone-maps once, at sensor resolution: each value becomes an index
 into the 256-entry palette, and mirroring is applied at the same time.

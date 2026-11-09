@@ -217,8 +217,41 @@ static void test_palettes() {
   CHECK(red[100].r == red[100].g && red[255].r == 255 && red[255].g == 0);  // grey, then red at the top
 }
 
+// The validity range, the optional median statistic, and the median filter
+// working on the repaired frame.
+static void test_valid_range_and_median() {
+  std::vector<float> t(N, 25.0f), out(N);
+  t[6 * W + 6] = 400.0f;  // a real reading for the HTI-301's high range; nonsense for the MLX90640
+  radiometric::Processor p;
+  radiometric::Options o;
+  o.outlier_level = 0;
+  p.set_options(o);
+  CHECK(p.process(t.data(), out.data(), W, H));
+  CHECK(NEAR(out[6 * W + 6], 25.0f, 1e-4f));  // default range: repaired
+  CHECK(!std::isnan(p.stats().median));
+  o.valid_max = 600.0f;
+  o.median_stat = false;
+  p.set_options(o);
+  CHECK(p.process(t.data(), out.data(), W, H));
+  CHECK(NEAR(out[6 * W + 6], 400.0f, 1e-4f) && NEAR(p.stats().max, 400.0f, 1e-4f));  // kept
+  CHECK(std::isnan(p.stats().median));  // not computed
+  // Median filter after repair: an invalid pixel next to a spike is repaired
+  // first, then the 3x3 median removes the spike.
+  std::vector<float> m(N, 20.0f);
+  m[10 * W + 10] = NAN;
+  m[10 * W + 11] = 80.0f;
+  radiometric::Options mo;
+  mo.outlier_level = 0;
+  mo.median_filter = true;
+  p.set_options(mo);
+  CHECK(p.process(m.data(), out.data(), W, H));
+  CHECK(NEAR(out[10 * W + 10], 20.0f, 1e-4f) && NEAR(out[10 * W + 11], 20.0f, 1e-4f));
+  CHECK(!std::isnan(out[10 * W + 10]));
+}
+
 int main() {
   test_palettes();
+  test_valid_range_and_median();
   test_radiometric();
   test_isp();
   test_large_frames();
