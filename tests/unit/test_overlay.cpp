@@ -122,7 +122,70 @@ static void bench() {
   std::printf("  host: overlay 3 marks on 640x480 RGB565 = %.3f ms\n", ms);
 }
 
+// A mark moves at once with its new value; in place, its value is refreshed
+// once per hold time.
+static void test_mark_hold() {
+  using K = video::AnnotationKind;
+  const uint32_t MIN_MAX = (1u << 0) | (1u << 1);
+  auto frame = [](std::initializer_list<video::Annotation> l) {
+    video::Annotations a;
+    for (const auto &x : l)
+      a.add(x);
+    return a;
+  };
+  overlay::MarkHold h;
+  auto one = [&](const video::Annotations &a, uint32_t now, uint32_t hold = 1000) {
+    const auto &s = h.update(a, MIN_MAX, now, hold);
+    return s.empty() ? overlay::MarkHold::Shown{-1, -1, -1.0f, K::OTHER} : s[0];
+  };
+  auto s = one(frame({{10.4f, 10.0f, 30.0f, K::MAX}}), 0);
+  CHECK(s.x == 10 && s.y == 10 && s.value == 30.0f);  // first: as it comes
+  s = one(frame({{10.0f, 10.9f, 31.0f, K::MAX}}), 40);
+  CHECK(s.x == 10 && s.y == 10 && s.value == 30.0f);  // same pixel: value held
+  s = one(frame({{10.0f, 10.0f, 31.5f, K::MAX}}), 999);
+  CHECK(s.value == 30.0f);
+  s = one(frame({{10.0f, 10.0f, 32.0f, K::MAX}}), 1000);
+  CHECK(s.value == 32.0f);  // a hold time later: refreshed
+  s = one(frame({{11.0f, 10.0f, 33.0f, K::MAX}}), 1040);
+  CHECK(s.x == 11 && s.y == 10 && s.value == 33.0f);  // moved: position and value at once
+  s = one(frame({{11.0f, 10.0f, 34.0f, K::MAX}}), 1080);
+  CHECK(s.x == 11 && s.value == 33.0f);  // held again from the move
+
+  // Kinds are held separately; a kind outside the mask is not shown.
+  const auto &both = h.update(frame({{11.0f, 10.0f, 35.0f, K::MAX}, {2.0f, 3.0f, 5.0f, K::MIN},
+                                     {20.0f, 20.0f, 25.0f, K::CENTER}}),
+                              MIN_MAX, 1120, 1000);
+  CHECK(both.size() == 2 && both[0].kind == K::MAX && both[0].value == 33.0f && both[1].kind == K::MIN &&
+        both[1].value == 5.0f);
+
+  // A kind missing from a frame starts afresh when it returns.
+  one(frame({{2.0f, 3.0f, 6.0f, K::MIN}}), 1160);
+  s = one(frame({{11.0f, 10.0f, 36.0f, K::MAX}}), 1200);
+  CHECK(s.value == 36.0f);
+
+  // reset() (a new image size): the next frame shows as it comes.
+  h.reset();
+  s = one(frame({{11.0f, 10.0f, 37.0f, K::MAX}}), 1240);
+  CHECK(s.value == 37.0f);
+
+  // Hold 0: every frame's value.
+  s = one(frame({{11.0f, 10.0f, 38.0f, K::MAX}}), 1280, 0);
+  CHECK(s.value == 38.0f);
+
+  // The clock wrapping does not freeze a value.
+  overlay::MarkHold w;
+  w.update(frame({{1.0f, 1.0f, 1.0f, K::MAX}}), MIN_MAX, 0xFFFFFF00u, 1000);
+  CHECK(w.update(frame({{1.0f, 1.0f, 2.0f, K::MAX}}), MIN_MAX, 0x00000100u, 1000)[0].value == 1.0f);
+  CHECK(w.update(frame({{1.0f, 1.0f, 3.0f, K::MAX}}), MIN_MAX, 0x00000400u, 1000)[0].value == 3.0f);
+
+  // A second annotation of the same kind shows as it comes.
+  const auto &dup = w.update(frame({{1.0f, 1.0f, 4.0f, K::MAX}, {5.0f, 5.0f, 9.0f, K::MAX}}), MIN_MAX,
+                             0x00000440u, 1000);
+  CHECK(dup.size() == 2 && dup[0].value == 3.0f && dup[1].value == 9.0f && dup[1].x == 5);
+}
+
 int main() {
+  test_mark_hold();
   test_formats();
   test_bounds_sweep();
   test_collisions();

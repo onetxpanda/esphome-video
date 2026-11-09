@@ -42,5 +42,35 @@ struct Rect {
 // rectangles used, for tests.
 std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &marks, const Style &style);
 
+// What to show for each annotation, frame by frame. A mark moves as soon as
+// its position changes, and its value changes with it. While it stays put,
+// its value is refreshed at most once per hold time, so the label doesn't
+// change with every frame's noise. Kept per annotation kind (the first of
+// each kind; any further one of the same kind shows as it comes).
+class MarkHold {
+ public:
+  struct Shown {
+    int x, y;  // image pixels
+    float value;
+    video::AnnotationKind kind;
+  };
+  // Takes a frame's annotations of the kinds in `kinds` (a bit per
+  // AnnotationKind) at `now_ms`; returns what to draw.
+  const std::vector<Shown> &update(const video::Annotations &a, uint32_t kinds, uint32_t now_ms, uint32_t hold_ms);
+  // Forgets everything shown (the image size changed): the next frame shows as it comes.
+  void reset();
+
+ protected:
+  struct Slot {
+    bool valid{false};
+    int x{0}, y{0};
+    float value{0};
+    uint32_t since_ms{0};  // when the value shown was taken
+  };
+  static constexpr size_t SLOTS = 8;
+  Slot slots_[SLOTS];
+  std::vector<Shown> shown_;
+};
+
 }  // namespace overlay
 }  // namespace esphome
