@@ -64,6 +64,27 @@ bool Processor::analyze(const float *in, uint16_t width, uint16_t height) {
   return true;
 }
 
+bool Processor::adopt(const video::FrameStats &fs, const float *in, uint16_t width, uint16_t height) {
+  if (!fs.valid || this->opt_.median_stat || in == nullptr || width == 0 || height == 0)
+    return false;
+  // Every pixel lies between the min and the max.
+  if (!(fs.min >= this->opt_.valid_min && fs.max <= this->opt_.valid_max))
+    return false;
+  Stats s;
+  s.valid = true;
+  s.min = fs.min;
+  s.max = fs.max;
+  s.mean = fs.mean;
+  s.min_x = fs.min_x;
+  s.min_y = fs.min_y;
+  s.max_x = fs.max_x;
+  s.max_y = fs.max_y;
+  s.median = NAN;
+  s.center = in[(height / 2) * width + width / 2];
+  this->stats_ = s;
+  return true;
+}
+
 bool Processor::process(const float *in, float *out, uint16_t width, uint16_t height) {
   const size_t n = static_cast<size_t>(width) * height;
   if (n == 0 || in == nullptr || out == nullptr)

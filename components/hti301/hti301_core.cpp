@@ -282,8 +282,11 @@ void TemperatureTable::build(uint16_t lo, uint16_t hi) {
     this->table_[r] = this->temperature(static_cast<uint16_t>(r));
 }
 
-bool raw_to_temperatures(const uint16_t *raw, size_t count, const Metadata &m, const Environment &env,
-                         TemperatureTable &table, float *out) {
+bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, const Metadata &m,
+                         const Environment &env, TemperatureTable &table, float *out, video::FrameStats *stats) {
+  if (stats != nullptr)
+    *stats = video::FrameStats();
+  const size_t count = static_cast<size_t>(width) * height;
   if (count == 0 || !table.prepare(m, env))
     return false;
   // Start from the camera's own min/max of the frame (metadata), which saves
@@ -297,16 +300,49 @@ bool raw_to_temperatures(const uint16_t *raw, size_t count, const Metadata &m, c
     lo = hi = raw[0] & RAW_MASK;
   }
   table.build(lo, hi);
-  for (size_t i = 0; i < count; i++) {
-    const uint16_t v = raw[i] & RAW_MASK;
-    if (v < lo) {
-      table.build(v, lo - 1);
-      lo = v;
-    } else if (v > hi) {
-      table.build(hi + 1, v);
-      hi = v;
+  // Statistics on the way, as the radiometric stage would compute them: the
+  // first pixel holding the min / max, the mean from per-row float sums.
+  float mn = std::numeric_limits<float>::infinity(), mx = -mn;
+  size_t mi = 0, ma = 0;
+  double sum = 0;
+  for (uint16_t y = 0; y < height; y++) {
+    const size_t row = static_cast<size_t>(y) * width;
+    const uint16_t *src = raw + row;
+    float *dst = out + row;
+    float row_sum = 0.0f;
+    for (uint16_t x = 0; x < width; x++) {
+      const uint16_t v = src[x] & RAW_MASK;
+      if (v < lo) {
+        table.build(v, lo - 1);
+        lo = v;
+      } else if (v > hi) {
+        table.build(hi + 1, v);
+        hi = v;
+      }
+      const float t = table.lookup(v);
+      dst[x] = t;
+      row_sum += t;
+      if (t < mn) {
+        mn = t;
+        mi = row + x;
+      }
+      if (t > mx) {
+        mx = t;
+        ma = row + x;
+      }
     }
-    out[i] = table.lookup(v);
+    sum += row_sum;
+  }
+  // A NaN or infinite pixel makes the sum non-finite.
+  if (stats != nullptr && std::isfinite(sum)) {
+    stats->valid = true;
+    stats->min = mn;
+    stats->max = mx;
+    stats->mean = static_cast<float>(sum / count);
+    stats->min_x = static_cast<uint16_t>(mi % width);
+    stats->min_y = static_cast<uint16_t>(mi / width);
+    stats->max_x = static_cast<uint16_t>(ma % width);
+    stats->max_y = static_cast<uint16_t>(ma / width);
   }
   return true;
 }

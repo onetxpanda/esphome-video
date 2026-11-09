@@ -59,6 +59,11 @@ class Processor {
   // False (stats untouched) if a pixel is invalid and needs process() to
   // repair it, or memory for the median is missing.
   bool analyze(const float *in, uint16_t width, uint16_t height);
+  // The same as analyze() from statistics the source computed with the frame,
+  // without reading it (only the centre pixel). False (stats untouched) if
+  // they cannot stand in: not valid, a median is wanted, or a pixel lies
+  // outside valid_min..valid_max.
+  bool adopt(const video::FrameStats &fs, const float *in, uint16_t width, uint16_t height);
 
  protected:
   Options opt_;

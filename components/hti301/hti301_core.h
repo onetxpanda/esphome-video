@@ -226,11 +226,14 @@ class TemperatureTable {
   int table_offset_{0};
 };
 
-// Converts `count` raw words (masked to 14 bits) to temperatures through a
-// table built over their range: the camera's reported min/max, extended for
-// any pixel outside it. Returns false if the calibration is unusable.
-bool raw_to_temperatures(const uint16_t *raw, size_t count, const Metadata &m, const Environment &env,
-                         TemperatureTable &table, float *out);
+// Converts width x height raw words (masked to 14 bits) to temperatures
+// through a table built over their range: the camera's reported min/max,
+// extended for any pixel outside it. Fills `stats` (if given) in the same
+// pass; it is invalid if any pixel has no finite temperature. Returns false
+// if the calibration is unusable.
+bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, const Metadata &m,
+                         const Environment &env, TemperatureTable &table, float *out,
+                         video::FrameStats *stats = nullptr);
 
 // ---------------------------------------------------------------- processed image
 

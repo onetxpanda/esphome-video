@@ -197,6 +197,9 @@ Stages pass two kinds of frame (`video_core/frame.h`):
 
 Both carry a capture timestamp, a sequence number, and up to four
 *annotations*: points of interest with a value, such as the hottest pixel.
+A radiometric frame can also carry the statistics its source worked out
+while producing it (min and max with their positions, mean), so a later
+stage need not read the whole frame again.
 
 A stage is connected to its upstream stage with `source:`. Every source
 delivers each frame to its sinks by calling them directly, on the source's
@@ -246,6 +249,10 @@ from their valid neighbours. Then come the outlier filter (a pixel differing
 from both row neighbours by at least `outlier_level` becomes their average),
 the running average and the 3x3 median. Statistics are computed last, in
 sensor coordinates. The min, max and centre become annotations on the frame.
+With no filter active and every pixel valid, the frame is passed on as it
+is and only the statistics are computed, in one read-only pass. If the
+source supplied statistics and no median is wanted, they are used and the
+frame is not read at all.
 
 `hti301` follows the camera's own driver. On connection it reads the UVC
 descriptors, sets the streaming interface to alternate setting 0,
@@ -280,14 +287,17 @@ the camera's calibration (detector and shutter temperatures, calibration
 constants) and the scene parameters stored in it. The conversion is the one
 in ht301_hacklib, including atmospheric transmission over the distance. For
 each frame a table is built over the frame's range of raw values, and every
-pixel is looked up in it. In processed mode the image rows are full-range
+pixel is looked up in it; the frame's statistics are gathered in the same
+pass. In processed mode the image rows are full-range
 YUYV, converted to RGB565. For the high range, raise `radiometric`'s
 `valid_max` (default 300 °C) above 450 °C so hot pixels are not treated as
 invalid.
 
 `isp` tone-maps once, at sensor resolution: each value becomes an index
 into the 256-entry palette, and mirroring is applied at the same time.
-Scaling then works on these indices. The CPU path has two modes. Nearest
+Scaling then works on these indices. At scale 1 there is nothing to scale,
+so each value is tone-mapped and coloured straight into the output frame in
+one pass. The CPU path has two modes. Nearest
 builds each output row once and copies it. Bilinear blends the two source
 rows once per output row, then interpolates along the row, in fixed point.
 The PPA path colours the small image and has the PPA scale it. The PPA's

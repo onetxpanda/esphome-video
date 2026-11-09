@@ -284,8 +284,115 @@ static void test_analyze_matches_process() {
   CHECK(p.filters_active());
 }
 
+// The one-pass unscaled path writes exactly what tone_map() + render() write
+// at scale 1: every format, every mirroring, clamping and NaN, odd sizes and
+// a padded stride (padding left alone).
+static void test_map_direct() {
+  const int w = 37, h = 23, n = w * h;
+  std::vector<float> t(n);
+  uint32_t seed = 777;
+  for (int i = 0; i < n; i++) {
+    seed = seed * 1103515245u + 12345u;
+    t[i] = -10.0f + static_cast<float>((seed >> 8) % 6000) / 100.0f;  // -10..50 C
+  }
+  t[5] = NAN;
+  t[6] = 1e6f;
+  t[7] = -1e6f;
+  isp::CpuIsp c;
+  c.set_palette(isp::make_palette(isp::Palette::IRONBOW));
+  isp::Options o;
+  o.range_min = 5.0f;
+  o.range_max = 35.0f;
+  o.scale = 1;
+  const video::ImageFormat formats[] = {video::ImageFormat::RGB565_LE, video::ImageFormat::RGB565_BE,
+                                        video::ImageFormat::RGB888, video::ImageFormat::GRAY8};
+  for (const auto f : formats) {
+    for (int m = 0; m < 4; m++) {
+      o.format = f;
+      o.mirror_x = (m & 1) != 0;
+      o.mirror_y = (m & 2) != 0;
+      const uint32_t stride = w * video::bytes_per_pixel(f) + 5;
+      std::vector<uint8_t> a(stride * h, 0xA5), b(stride * h, 0xA5);
+      c.tone_map(t.data(), w, h, o);
+      c.render(o, a.data(), stride);
+      c.map_direct(t.data(), w, h, o, b.data(), stride);
+      CHECK(a == b);
+    }
+  }
+}
+
+// adopt() takes a source's own statistics in place of analyze(): the same
+// results, and it declines whenever analyze() would have to look at pixels.
+static void test_adopt() {
+  const int w = 384, h = 288, n = w * h;
+  std::vector<float> t(n);
+  uint32_t seed = 4242;
+  for (int i = 0; i < n; i++) {
+    seed = seed * 1103515245u + 12345u;
+    t[i] = 15.0f + static_cast<float>((seed >> 8) % 3000) / 100.0f;
+  }
+  // The statistics as a source works them out (the HTI-301 conversion).
+  video::FrameStats fs;
+  float mn = INFINITY, mx = -INFINITY;
+  int mi = 0, ma = 0;
+  double sum = 0;
+  for (int y = 0; y < h; y++) {
+    float rs = 0.0f;
+    for (int x = 0; x < w; x++) {
+      const float v = t[y * w + x];
+      rs += v;
+      if (v < mn) {
+        mn = v;
+        mi = y * w + x;
+      }
+      if (v > mx) {
+        mx = v;
+        ma = y * w + x;
+      }
+    }
+    sum += rs;
+  }
+  fs.valid = true;
+  fs.min = mn;
+  fs.max = mx;
+  fs.mean = static_cast<float>(sum / n);
+  fs.min_x = mi % w;
+  fs.min_y = mi / w;
+  fs.max_x = ma % w;
+  fs.max_y = ma / w;
+
+  radiometric::Options o;
+  o.outlier_level = 0;
+  o.median_stat = false;  // as with no median sensor
+  radiometric::Processor a, b;
+  a.set_options(o);
+  b.set_options(o);
+  CHECK(a.adopt(fs, t.data(), w, h));
+  CHECK(b.analyze(t.data(), w, h));
+  const auto &sa = a.stats(), &sb = b.stats();
+  CHECK(sa.valid && sa.min == sb.min && sa.max == sb.max && sa.mean == sb.mean && sa.center == sb.center);
+  CHECK(sa.min_x == sb.min_x && sa.min_y == sb.min_y && sa.max_x == sb.max_x && sa.max_y == sb.max_y);
+  CHECK(std::isnan(sa.median));
+
+  // Declined: no statistics, a median wanted, a pixel outside the valid range.
+  radiometric::Processor p;
+  p.set_options(o);
+  CHECK(!p.adopt(video::FrameStats(), t.data(), w, h));
+  CHECK(!p.stats().valid);
+  o.median_stat = true;
+  p.set_options(o);
+  CHECK(!p.adopt(fs, t.data(), w, h));
+  o.median_stat = false;
+  o.valid_max = 40.0f;  // the frame reaches 45 C
+  p.set_options(o);
+  CHECK(!p.adopt(fs, t.data(), w, h));
+  CHECK(!p.analyze(t.data(), w, h));  // which analyze() agrees needs repair
+}
+
 int main() {
   test_palettes();
+  test_map_direct();
+  test_adopt();
   test_analyze_matches_process();
   test_valid_range_and_median();
   test_radiometric();

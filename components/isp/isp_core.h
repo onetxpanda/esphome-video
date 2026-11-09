@@ -59,12 +59,21 @@ class CpuIsp {
   // Small colour image at input resolution (for a hardware scaler).
   void colorize(const Options &o, uint8_t *dst, uint32_t stride) const;
 
+  // Unscaled output in one pass: tone-maps `in` (mirroring applied) straight
+  // to `dst` in o.format, as tone_map() then render() would at scale 1,
+  // without the index image.
+  void map_direct(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
+                  uint32_t stride) const;
+
   uint16_t width() const { return this->w_; }
   uint16_t height() const { return this->h_; }
 
  protected:
   void write_px_(uint8_t *p, uint8_t idx, video::ImageFormat f) const;
   template<video::ImageFormat F> void bilinear_(int s, uint8_t *dst, uint32_t stride) const;
+  template<video::ImageFormat F>
+  void map_direct_(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
+                   uint32_t stride) const;
   std::array<Rgb, 256> palette_{};
   std::array<uint16_t, 256> pal565_le_{};  // palette as RGB565 values
   video::LargeBuffer<uint8_t> idx_;
