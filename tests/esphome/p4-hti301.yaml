@@ -23,7 +23,7 @@ external_components:
   - source:
       type: local
       path: ../../components
-    components: [assert_capture, video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, video_palette, h264_encoder, rtsp_server]
+    components: [assert_capture, task_stats, video_core, video_controls, hti301, mlx90640, radiometric, isp, overlay, video_camera, video_switch, video_palette, h264_encoder, rtsp_server]
 
 logger:
 api:
@@ -53,6 +53,10 @@ mlx90640:
 assert_capture:
   last_crash:
     name: "Last Crash"
+
+task_stats:
+  load:
+    name: "CPU Load"
 
 usb_host:
   enable_hubs: true

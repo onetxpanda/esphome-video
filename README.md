@@ -19,6 +19,7 @@ encoders; there is no software encoding.
 | `video_palette` | One select entity choosing the palette of several ISPs and cameras at once. |
 | `video_switch` | Chooses which of several image sources reaches the consumers after it (encoder, camera), with a select entity. |
 | `assert_capture` | Records why the firmware aborted (failed assert with file and line, `abort()` caller, task stack overflow) and reports it after the reboot. |
+| `task_stats` | Logs each FreeRTOS task's share of the CPU and each core's idle time; optional CPU load sensor. |
 | `video_core`, `video_controls` | Shared frame types and runtime option entities; loaded automatically. |
 
 ## Usage
@@ -178,6 +179,10 @@ a YAML list, for example one chain per camera.
 - **video_test_pattern**: `width`, `height`, `fps`.
 - **assert_capture**: `last_crash` (text sensor). The record is also logged
   at boot and in the config dump.
+- **task_stats**: `update_interval` (default 10 s), `top` (busiest tasks
+  listed, default 12), `load` (sensor: CPU in use, % of all cores). Task
+  shares are logged as % of one core. It turns on FreeRTOS run-time
+  statistics, which read a timer at every task switch.
 - **video_palette**: `targets` (ISPs, and cameras that colour their own image
   such as the HTI-301), `palette` (initial). The select restores its last
   value.
