@@ -122,8 +122,7 @@ static void bench() {
   std::printf("  host: overlay 3 marks on 640x480 RGB565 = %.3f ms\n", ms);
 }
 
-// A mark moves at once with its new value; in place, its value is refreshed
-// once per hold time.
+// A mark's position and value are refreshed together once per hold time.
 static void test_mark_hold() {
   using K = video::AnnotationKind;
   const uint32_t MIN_MAX = (1u << 0) | (1u << 1);
@@ -142,14 +141,14 @@ static void test_mark_hold() {
   CHECK(s.x == 10 && s.y == 10 && s.value == 30.0f);  // first: as it comes
   s = one(frame({{10.0f, 10.9f, 31.0f, K::MAX}}), 40);
   CHECK(s.x == 10 && s.y == 10 && s.value == 30.0f);  // same pixel: value held
+  s = one(frame({{14.0f, 12.0f, 31.5f, K::MAX}}), 500);
+  CHECK(s.x == 10 && s.y == 10 && s.value == 30.0f);  // moved: position held too
   s = one(frame({{10.0f, 10.0f, 31.5f, K::MAX}}), 999);
   CHECK(s.value == 30.0f);
-  s = one(frame({{10.0f, 10.0f, 32.0f, K::MAX}}), 1000);
-  CHECK(s.value == 32.0f);  // a hold time later: refreshed
-  s = one(frame({{11.0f, 10.0f, 33.0f, K::MAX}}), 1040);
-  CHECK(s.x == 11 && s.y == 10 && s.value == 33.0f);  // moved: position and value at once
-  s = one(frame({{11.0f, 10.0f, 34.0f, K::MAX}}), 1080);
-  CHECK(s.x == 11 && s.value == 33.0f);  // held again from the move
+  s = one(frame({{11.0f, 10.0f, 33.0f, K::MAX}}), 1000);
+  CHECK(s.x == 11 && s.y == 10 && s.value == 33.0f);  // a hold time later: position and value
+  s = one(frame({{12.0f, 10.0f, 34.0f, K::MAX}}), 1040);
+  CHECK(s.x == 11 && s.value == 33.0f);  // held again
 
   // Kinds are held separately; a kind outside the mask is not shown.
   const auto &both = h.update(frame({{11.0f, 10.0f, 35.0f, K::MAX}, {2.0f, 3.0f, 5.0f, K::MIN},

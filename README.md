@@ -168,8 +168,8 @@ a YAML list, for example one chain per camera.
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear), `scaler` (cpu, ppa). Controls: `range_min`,
   `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`.
-- **overlay**: `marks` (min, max, center), `hold` (how often a mark's value
-  is refreshed while the mark stays put; default 1 s), `unit` (C, F),
+- **overlay**: `marks` (min, max, center), `hold` (how often a mark's
+  position and value are refreshed; default 1 s), `unit` (C, F),
   `enabled`. Controls: `enabled`, `unit`.
 - **h264_encoder**: `source` (list), `fps` (default: measured from the
   source), `gop` (default: one keyframe per second), `bitrate` (default:
@@ -317,10 +317,9 @@ Annotations are moved through the same mirroring and scaling as the pixels.
 `overlay` draws only its own pixels: a reticle and a label per annotation,
 white with a one-pixel black outline. Each label goes below, above, right or
 left of its reticle, taking the first position that is inside the image and
-clear of other labels and reticles. A mark moves as soon as its annotation
-does, and its label shows the new value at once; while the mark stays on the
-same pixel, its value is refreshed once per `hold`, so the label does not
-change with every frame's noise. Because it draws into the frame it
+clear of other labels and reticles. A mark's position and value are
+refreshed together once per `hold`, so neither the reticle nor its label
+jumps with every frame's noise. Because it draws into the frame it
 receives, it must be its source's only consumer. A source with an overlay
 and another consumer fails at setup with an error. Attach other consumers to
 the overlay instead.

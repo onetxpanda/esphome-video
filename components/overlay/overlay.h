@@ -2,9 +2,8 @@
 
 // Draws a frame's annotations (reticles with value labels) into the image
 // and passes it on. Draws in place, so it must be its source's only sink.
-// A mark moves as soon as its annotation does, with its new value; while it
-// stays put, its value is refreshed once per hold time, so the label doesn't
-// change with every frame's noise.
+// A mark's position and value are refreshed together once per hold time, so
+// neither the reticle nor its label jumps with every frame's noise.
 
 #include <atomic>
 #include <mutex>
