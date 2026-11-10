@@ -38,8 +38,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(Overlay),
         cv.Required(CONF_SOURCE): cv.use_id(ImageSource),
         cv.Optional(CONF_MARKS, default=KINDS): cv.ensure_list(cv.one_of(*KINDS, lower=True)),
-        # A mark's value is refreshed this often while the mark stays put; a
-        # mark that moves shows its new position and value at once.
+        # How often a mark's position and value are refreshed (together).
         cv.Optional(CONF_HOLD, default="1s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_UNIT, default="C"): cv.one_of(*UNITS, upper=True),

@@ -42,11 +42,11 @@ struct Rect {
 // rectangles used, for tests.
 std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &marks, const Style &style);
 
-// What to show for each annotation, frame by frame. A mark moves as soon as
-// its position changes, and its value changes with it. While it stays put,
-// its value is refreshed at most once per hold time, so the label doesn't
-// change with every frame's noise. Kept per annotation kind (the first of
-// each kind; any further one of the same kind shows as it comes).
+// What to show for each annotation, frame by frame. A mark's position and
+// value are refreshed together at most once per hold time, so neither the
+// reticle nor its label jumps with every frame's noise. Kept per annotation
+// kind (the first of each kind; any further one of the same kind shows as it
+// comes).
 class MarkHold {
  public:
   struct Shown {
@@ -65,7 +65,7 @@ class MarkHold {
     bool valid{false};
     int x{0}, y{0};
     float value{0};
-    uint32_t since_ms{0};  // when the value shown was taken
+    uint32_t since_ms{0};  // when the position and value shown were taken
   };
   static constexpr size_t SLOTS = 8;
   Slot slots_[SLOTS];

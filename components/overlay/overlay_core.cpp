@@ -168,8 +168,8 @@ const std::vector<MarkHold::Shown> &MarkHold::update(const video::Annotations &a
     }
     seen[k] = true;
     Slot &s = this->slots_[k];
-    // Moved (or new): position and value now. In place: the value once per hold time.
-    if (!s.valid || s.x != x || s.y != y || now_ms - s.since_ms >= hold_ms) {
+    // Position and value together, once per hold time (new: at once).
+    if (!s.valid || now_ms - s.since_ms >= hold_ms) {
       s.valid = true;
       s.x = x;
       s.y = y;
