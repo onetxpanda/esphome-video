@@ -60,6 +60,12 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
   return true;
 }
 
+// The per-pixel loop is built for speed (the firmware is built for size,
+// which neither schedules nor unrolls it).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
 void CpuIsp::map_direct(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
                         uint32_t stride) const {
   if (in == nullptr || dst == nullptr)
@@ -91,6 +97,7 @@ void CpuIsp::map_direct_(const float *in, uint16_t in_w, uint16_t in_h, const Op
   for (int y = 0; y < in_h; y++) {
     const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
     uint8_t *p = dst + static_cast<size_t>(y) * stride;
+#pragma GCC unroll 4
     for (int x = 0; x < in_w; x++, src += step) {
       const uint8_t i = to_index(*src, lo, k);
       if (F == ImageFormat::RGB565_LE) {
@@ -114,6 +121,9 @@ void CpuIsp::map_direct_(const float *in, uint16_t in_w, uint16_t in_h, const Op
     }
   }
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 inline void CpuIsp::write_px_(uint8_t *p, uint8_t idx, ImageFormat f) const {
   switch (f) {

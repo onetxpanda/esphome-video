@@ -217,7 +217,8 @@ class TemperatureTable {
   float temperature(uint16_t raw) const;
   // Fills the table for raw values lo..hi (inclusive, at most TABLE_SIZE - 1).
   void build(uint16_t lo, uint16_t hi);
-  float lookup(uint16_t raw) const { return this->table_[raw & RAW_MASK]; }
+  // The table, indexed by raw value: allocated by prepare(), filled by build().
+  const float *values() { return this->table_.data(); }
 
  protected:
   video::LargeBuffer<float> table_;

@@ -298,8 +298,9 @@ constants) and the scene parameters stored in it. The conversion is the one
 in ht301_hacklib, including atmospheric transmission over the distance. For
 each frame a table is built over the frame's range of raw values, and every
 pixel is looked up in it; the frame's statistics are gathered in the same
-pass. In processed mode the image rows are full-range
-YUYV, converted to RGB565. For the high range, raise `radiometric`'s
+pass. This loop, and `isp`'s scale-1 loop below, are compiled for speed
+(-O2, unrolled) while the rest of the firmware is compiled for size. In
+processed mode the image rows are full-range YUYV, converted to RGB565. For the high range, raise `radiometric`'s
 `valid_max` (default 300 °C) above 450 °C so hot pixels are not treated as
 invalid.
 

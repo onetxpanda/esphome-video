@@ -282,6 +282,12 @@ void TemperatureTable::build(uint16_t lo, uint16_t hi) {
     this->table_[r] = this->temperature(static_cast<uint16_t>(r));
 }
 
+// The per-pixel loop is built for speed (the firmware is built for size,
+// which neither schedules nor unrolls it).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
 bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, const Metadata &m,
                          const Environment &env, TemperatureTable &table, float *out, video::FrameStats *stats) {
   if (stats != nullptr)
@@ -300,6 +306,7 @@ bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, c
     lo = hi = raw[0] & RAW_MASK;
   }
   table.build(lo, hi);
+  const float *tab = table.values();  // build() fills it in place
   // Statistics on the way, as the radiometric stage would compute them: the
   // first pixel holding the min / max, the mean from per-row float sums.
   float mn = std::numeric_limits<float>::infinity(), mx = -mn;
@@ -310,16 +317,20 @@ bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, c
     const uint16_t *src = raw + row;
     float *dst = out + row;
     float row_sum = 0.0f;
+#pragma GCC unroll 4
     for (uint16_t x = 0; x < width; x++) {
       const uint16_t v = src[x] & RAW_MASK;
-      if (v < lo) {
-        table.build(v, lo - 1);
-        lo = v;
-      } else if (v > hi) {
-        table.build(hi + 1, v);
-        hi = v;
+      // Outside the range built so far (rare): extend the table.
+      if (__builtin_expect(static_cast<uint16_t>(v - lo) > static_cast<uint16_t>(hi - lo), 0)) {
+        if (v < lo) {
+          table.build(v, lo - 1);
+          lo = v;
+        } else {
+          table.build(hi + 1, v);
+          hi = v;
+        }
       }
-      const float t = table.lookup(v);
+      const float t = tab[v];
       dst[x] = t;
       row_sum += t;
       if (t < mn) {
@@ -346,6 +357,9 @@ bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, c
   }
   return true;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 // ---------------------------------------------------------------- processed image
 
