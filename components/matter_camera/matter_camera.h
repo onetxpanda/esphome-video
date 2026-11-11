@@ -21,6 +21,7 @@ class MatterCamera : public Component, public h264_encoder::EncodedFrameSink {
 
   void set_encoder(h264_encoder::H264Encoder *encoder) { this->encoder_ = encoder; }
   void set_endpoint_id(uint16_t endpoint_id) { this->endpoint_id_ = endpoint_id; }
+  void set_matter(matter::MatterComponent *matter) { this->matter_ = matter; }
 
   void setup() override;
   void loop() override;
@@ -44,6 +45,7 @@ class MatterCamera : public Component, public h264_encoder::EncodedFrameSink {
   static MatterCamera *instance_;
 
   h264_encoder::H264Encoder *encoder_{nullptr};
+  matter::MatterComponent *matter_{nullptr};
   uint16_t endpoint_id_{1};
   bool matter_started_{false};
   bool webrtc_started_{false};

@@ -218,7 +218,7 @@ public:
     // Does camera have a microphone
     bool HasMicrophone() override
     {
-        return false;
+        return true;
     }
 
     // Mute/Unmute microphone.
@@ -287,7 +287,7 @@ public:
     // Does camera have a status light
     bool HasStatusLight() override
     {
-        return false;
+        return true;
     }
 
     // Set/Get StatusLightEnabled

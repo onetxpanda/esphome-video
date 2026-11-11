@@ -190,6 +190,7 @@ async def to_code(config):
     cg.add(var.set_encoder(encoder))
     cg.add(var.set_endpoint_id(config[CONF_ENDPOINT]))
     matter = await cg.get_variable(config[CONF_MATTER_ID])
+    cg.add(var.set_matter(matter))
     cg.add(
         matter.register_endpoint(
             config[CONF_ENDPOINT],

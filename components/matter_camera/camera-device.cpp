@@ -181,12 +181,12 @@ bool CameraDevice::GetNightVisionUsesInfrared()
 
 bool CameraDevice::GetCameraSupportsWatermark()
 {
-    return false;
+    return true;
 }
 
 bool CameraDevice::GetCameraSupportsOSD()
 {
-    return false;
+    return true;
 }
 
 bool CameraDevice::GetCameraSupportsSoftPrivacy()
