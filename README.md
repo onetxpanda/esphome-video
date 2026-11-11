@@ -140,6 +140,35 @@ restores its last value on boot.
 `radiometric`, `isp` and `overlay` can each be configured more than once, as
 a YAML list, for example one chain per camera.
 
+`mlx90640`, `hti301`, `radiometric`, `isp` and `overlay` take `device_id`: an
+ESPHome sub-device (`esphome: devices:`) that all of the component's entities
+belong to, unless an entity names its own. Give each camera's chain its own
+device and its entities appear under that device in Home Assistant, so two
+chains can use the same names:
+
+```yaml
+esphome:
+  devices:
+    - id: hti_device
+      name: "HTI-301"
+    - id: mlx_device
+      name: "MLX90640"
+
+isp:
+  - id: hti_isp
+    source: hti_rad
+    device_id: hti_device
+    controls:
+      range_min:
+        name: "Range Min"      # shown as "HTI-301 Range Min"
+  - id: mlx_isp
+    source: mlx_rad
+    device_id: mlx_device
+    controls:
+      range_min:
+        name: "Range Min"      # shown as "MLX90640 Range Min"
+```
+
 - **mlx90640**: `refresh_rate` (0.5Hz–64Hz), `frame_mode` (interpolate, merge),
   `emissivity`. Controls: `refresh_rate`, `frame_mode`.
 - **hti301**: `mode` (radiometric, processed), `range` (normal, high),

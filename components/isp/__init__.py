@@ -14,11 +14,13 @@ from esphome.components.video_controls import (
     switch_control,
 )
 from esphome.components.video_core import (
-    PALETTE_KEYS,
+    DEVICE_ID_SCHEMA,
     ImageSource,
+    PALETTE_KEYS,
     PaletteTarget,
     RadiometricSink,
     RadiometricSource,
+    inherit_device_id,
 )
 import esphome.config_validation as cv
 from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE
@@ -71,9 +73,11 @@ def _palette(value):
 
 
 CONFIG_SCHEMA = cv.All(
+    inherit_device_id("controls.*"),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(Isp),
+            **DEVICE_ID_SCHEMA,
             cv.Required(CONF_SOURCE): cv.use_id(RadiometricSource),
             # Output size is the source size times this.
             cv.Optional(CONF_SCALE, default=1): cv.int_range(min=1, max=20),

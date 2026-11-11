@@ -7,8 +7,14 @@
 # A video_switch chooses what both the encoder and the camera entity get; its
 # "HTI-301" entry holds both of the camera's outputs, and the HTI-301's mode
 # select decides which of them produces frames.
+# Each camera's chain is its own sub-device, so their entities share names.
 esphome:
   name: p4-hti301
+  devices:
+    - id: hti_device
+      name: "HTI-301"
+    - id: mlx_device
+      name: "MLX90640"
 
 esp32:
   variant: esp32p4
@@ -49,6 +55,10 @@ i2c:
 mlx90640:
   id: mlx
   i2c_id: bus_i2c
+  device_id: mlx_device
+  controls:
+    refresh_rate:
+      name: "Refresh Rate"
 
 assert_capture:
   last_crash:
@@ -63,6 +73,7 @@ usb_host:
 
 hti301:
   id: hti
+  device_id: hti_device
   mode: radiometric
   range: normal
   palette: ironbow
@@ -73,58 +84,70 @@ hti301:
   log_timing: true
   controls:
     mode:
-      name: "HTI Mode"
+      name: "Mode"
     range:
-      name: "HTI Range"
+      name: "Range"
     palette:
-      name: "HTI Palette"
+      name: "Palette"
     emissivity:
-      name: "HTI Emissivity"
+      name: "Emissivity"
     calibrate:
-      name: "HTI Calibrate"
+      name: "Calibrate"
     restart_usb:
-      name: "HTI USB Restart"
+      name: "USB Restart"
   streaming:
-    name: "HTI Streaming"
+    name: "Streaming"
   usb_status:
-    name: "HTI USB"
+    name: "USB"
 
 radiometric:
   - id: hti_rad
     source: hti
+    device_id: hti_device
     log_timing: true
     min:
-      name: "HTI Min"
+      name: "Min"
     max:
-      name: "HTI Max"
+      name: "Max"
     center:
-      name: "HTI Center"
+      name: "Center"
   - id: mlx_rad
     source: mlx
+    device_id: mlx_device
     max:
-      name: "MLX Max"
+      name: "Max"
 
 isp:
   - id: hti_isp
     source: hti_rad
+    device_id: hti_device
     scale: 1
     controls:
       range_min:
-        name: "HTI Range Min"
+        name: "Range Min"
   - id: mlx_isp
     source: mlx_rad
+    device_id: mlx_device
     scale: 20
     scaler: ppa
     controls:
       range_min:
-        name: "MLX Range Min"
+        name: "Range Min"
 
 overlay:
   - id: hti_overlay
     source: hti_isp
+    device_id: hti_device
     unit: C
+    controls:
+      unit:
+        name: "Overlay Unit"
   - id: mlx_overlay
     source: mlx_isp
+    device_id: mlx_device
+    controls:
+      unit:
+        name: "Overlay Unit"
 
 video_palette:
   name: "Palette"

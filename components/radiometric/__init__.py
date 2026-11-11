@@ -10,7 +10,12 @@ from esphome.components.video_controls import (
     number_control,
     switch_control,
 )
-from esphome.components.video_core import RadiometricSink, RadiometricSource
+from esphome.components.video_core import (
+    DEVICE_ID_SCHEMA,
+    RadiometricSink,
+    RadiometricSource,
+    inherit_device_id,
+)
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_ID,
@@ -57,9 +62,10 @@ def _validate(config):
     return config
 
 
-CONFIG_SCHEMA = cv.All(cv.Schema(
+CONFIG_SCHEMA = cv.All(inherit_device_id("controls.*", *SENSORS), cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(Radiometric),
+        **DEVICE_ID_SCHEMA,
         cv.Required(CONF_SOURCE): cv.use_id(RadiometricSource),
         # Running average over this many frames; 1 = off. Adds lag.
         cv.Optional(CONF_TEMPORAL_FRAMES, default=1): cv.int_range(min=1, max=8),

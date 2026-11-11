@@ -10,7 +10,7 @@ from esphome.components.video_controls import (
     select_control,
     switch_control,
 )
-from esphome.components.video_core import ImageSink, ImageSource
+from esphome.components.video_core import DEVICE_ID_SCHEMA, ImageSink, ImageSource, inherit_device_id
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_SOURCE
 
@@ -33,23 +33,27 @@ Overlay = overlay_ns.class_("Overlay", cg.Component, ImageSink, ImageSource)
 Unit = overlay_ns.enum("Unit", is_class=True)
 AnnotationKind = cg.esphome_ns.namespace("video").enum("AnnotationKind", is_class=True)
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(Overlay),
-        cv.Required(CONF_SOURCE): cv.use_id(ImageSource),
-        cv.Optional(CONF_MARKS, default=KINDS): cv.ensure_list(cv.one_of(*KINDS, lower=True)),
-        # How often a mark's position and value are refreshed (together).
-        cv.Optional(CONF_HOLD, default="1s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_ENABLED, default=True): cv.boolean,
-        cv.Optional(CONF_UNIT, default="C"): cv.one_of(*UNITS, upper=True),
-        cv.Optional(CONF_CONTROLS, default={}): cv.Schema(
-            {
-                cv.Optional(CONF_ENABLED): switch_control(),
-                cv.Optional(CONF_UNIT): select_control(),
-            }
-        ),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.All(
+    inherit_device_id("controls.*"),
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(Overlay),
+            **DEVICE_ID_SCHEMA,
+            cv.Required(CONF_SOURCE): cv.use_id(ImageSource),
+            cv.Optional(CONF_MARKS, default=KINDS): cv.ensure_list(cv.one_of(*KINDS, lower=True)),
+            # How often a mark's position and value are refreshed (together).
+            cv.Optional(CONF_HOLD, default="1s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_ENABLED, default=True): cv.boolean,
+            cv.Optional(CONF_UNIT, default="C"): cv.one_of(*UNITS, upper=True),
+            cv.Optional(CONF_CONTROLS, default={}): cv.Schema(
+                {
+                    cv.Optional(CONF_ENABLED): switch_control(),
+                    cv.Optional(CONF_UNIT): select_control(),
+                }
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+)
 
 
 async def to_code(config):
