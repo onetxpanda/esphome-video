@@ -307,7 +307,9 @@ async def to_code(config: ConfigType):
         add_idf_sdkconfig_option("CONFIG_LWIP_IPV6_ND6_ROUTE_INFO_OPTION_SUPPORT", True)
 
     # Has nothing to do with telemetry... But this is how connectedhomeip names the option that enables ethernet.
-    add_idf_sdkconfig_option("CONFIG_ENABLE_ETHERNET_TELEMETRY", use_ethernet)
+    # With Wi-Fi configured, Matter runs over Wi-Fi only: CHIP's Ethernet support
+    # is not used alongside it.
+    add_idf_sdkconfig_option("CONFIG_ENABLE_ETHERNET_TELEMETRY", use_ethernet and not use_wifi)
 
     # CONFIG_ENABLE_CHIPOBLE is enabled by default and must explicitly be disabled when not needed.
     add_idf_sdkconfig_option("CONFIG_ENABLE_CHIPOBLE", not has_connectivity)
