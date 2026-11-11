@@ -137,6 +137,8 @@ class H264Encoder : public Component {
   esp_h264_raw_format_t enc_type_{ESP_H264_RAW_FMT_RGB565_LE};
   uint8_t enc_fps_{0};
   uint32_t enc_opened_ms_{0};
+  bool drifting_{false};  // measured rate off from the declared one since drift_since_ms_
+  uint32_t drift_since_ms_{0};
 
   // Statistics
   std::atomic<uint32_t> encoded_frames_{0};

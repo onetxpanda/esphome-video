@@ -333,6 +333,7 @@ void RtspServerCore::handle_request_(Client &c, const RtspRequest &req) {
     // The response must precede the first RTP packet; it does, since both share
     // this client's ordered send buffer. Start at the next keyframe.
     c.waiting_keyframe = true;
+    c.keyframe_asked = true;
     this->set_state_(c, State::PLAYING);
     if (this->config_.request_keyframe)
       this->config_.request_keyframe();
@@ -449,7 +450,13 @@ void RtspServerCore::on_access_unit(const uint8_t *data, size_t length, uint32_t
       continue;
     if (c.waiting_keyframe) {
       if (!keyframe) {
-        want_keyframe = true;
+        // Ask once per wait, and only when the client has room for a keyframe
+        // again: asking while it is still behind only makes the frames it
+        // cannot take larger (and so every other frame a keyframe).
+        if (!c.keyframe_asked && c.out.size() - c.out_off <= this->config_.max_client_buffer / 2) {
+          c.keyframe_asked = true;
+          want_keyframe = true;
+        }
         continue;
       }
       c.waiting_keyframe = false;
@@ -457,9 +464,10 @@ void RtspServerCore::on_access_unit(const uint8_t *data, size_t length, uint32_t
     // Room for this frame plus packet overhead (16 bytes per packet)?
     size_t estimate = length + 16 * (length / this->config_.max_payload + this->nal_scratch_.size() + 1);
     if (c.out.size() - c.out_off + estimate > this->config_.max_client_buffer) {
-      // Never send part of a frame: drop it and resume at the next keyframe.
+      // Never send part of a frame: drop it and resume at the next keyframe
+      // (requested above once the client has caught up).
       c.waiting_keyframe = true;
-      want_keyframe = true;
+      c.keyframe_asked = false;
       this->dropped_frames_++;
       continue;
     }

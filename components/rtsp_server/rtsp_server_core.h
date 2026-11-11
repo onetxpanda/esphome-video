@@ -82,6 +82,7 @@ class RtspServerCore {
     RtpState rtp;
     uint32_t ts_base{0};
     bool waiting_keyframe{true};
+    bool keyframe_asked{false};  // a keyframe was requested for this wait
     bool reject{false};
     bool close_after_flush{false};
     bool dead{false};

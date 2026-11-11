@@ -116,6 +116,13 @@ def unit_tests():
         if r.returncode != 0:
             print(r.stdout[-2000:])
         check(r.returncode == 0, "a client is never closed as idle because the clock ticked mid-poll")
+    exe = build("test_keyframe_requests", [os.path.join(HERE, "unit", "test_keyframe_requests.cpp"),
+                                           os.path.join(RTSP, "rtsp_core.cpp"),
+                                           os.path.join(RTSP, "rtsp_server_core.cpp")], ASAN)
+    if check(exe is not None, "keyframe request test builds"):
+        r = run([exe], timeout=60)
+        print("  " + (r.stdout.strip().splitlines() or ["(no output)"])[-1])
+        check(r.returncode == 0, "a client that falls behind gets one keyframe request per stall")
 
 
 class Server:
