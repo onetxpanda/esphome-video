@@ -239,8 +239,13 @@ and drops frames instead of stopping the device.
   encoded straight from the producer's buffer, held until the hardware is
   done. Any other frame is first converted into a padded buffer. Without a
   configured `fps`, the encoder declares the measured source rate in the
-  stream. If that rate later drifts by more than 25%, it restarts the stream
-  with a keyframe.
+  stream. If that rate later stays more than 25% off for 3 s, it restarts the
+  stream with a keyframe.
+- `rtsp_server` sends each client whole frames only. When a client's backlog
+  would exceed `buffer_size`, its frames are dropped until the next keyframe.
+  It asks the encoder for that keyframe once, when the client's backlog has
+  drained to half of `buffer_size`, so a slow link is not flooded with
+  keyframes.
 - `video_camera` encodes a JPEG only after a client has asked for one. It
   uses the P4's hardware encoder, on the calling task, and hands the image to
   ESPHome's camera clients on the main loop.
@@ -332,7 +337,9 @@ the overlay instead.
 - unit tests under AddressSanitizer and UBSan: frames and pools, radiometric
   processing, the CPU ISP, overlay drawing, sub-page assembly, the HTI-301
   core (descriptors, packet assembly, the temperature conversion against the
-  reference code, YUYV), and the RTSP protocol helpers; the frame pool also runs under ThreadSanitizer;
+  reference code, YUYV), the RTSP protocol helpers, and the RTSP server's
+  keyframe requests for a client that falls behind; the frame pool also runs
+  under ThreadSanitizer;
 - the RTSP server on the host against ffmpeg, ffprobe and GStreamer clients;
 - the encoder's build guard;
 - ESPHome configurations: invalid ones must be rejected with the expected

@@ -50,7 +50,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             # Frame rate for rate control and the stream's timing info.
             # Default: measured from the active source (the encoder restarts
-            # its stream with a keyframe when the rate changes by over 25%).
+            # its stream with a keyframe when the rate stays over 25% off for 3 s).
             cv.Optional(CONF_FPS): cv.int_range(min=1, max=60),
             # Keyframe interval in frames (default: one per second). Smaller
             # values let viewers start sooner, at the cost of bitrate.

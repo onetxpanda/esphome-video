@@ -25,9 +25,11 @@ static constexpr uint16_t MAX_WIDTH = 1920;
 static constexpr uint16_t MAX_HEIGHT = 2032;
 // Conversion buffers up to this size use internal DMA RAM; larger ones PSRAM.
 static constexpr uint32_t INTERNAL_BUFFER_LIMIT = 96 * 1024;
-// With a measured frame rate, reopen the encoder when the rate drifts by more
-// than this fraction, at most once per REOPEN_MIN_MS.
+// With a measured frame rate, reopen the encoder when the rate has been off by
+// more than this fraction for DRIFT_MS (a short hiccup, such as the source
+// switching modes, does not count), at most once per REOPEN_MIN_MS.
 static constexpr float FPS_TOLERANCE = 0.25f;
+static constexpr uint32_t DRIFT_MS = 3000;
 static constexpr uint32_t REOPEN_MIN_MS = 5000;
 static constexpr uint8_t DEFAULT_FPS = 10;  // before a rate has been measured
 
@@ -344,6 +346,7 @@ bool H264Encoder::open_encoder_() {
   this->enc_type_ = this->type_;
   this->enc_fps_ = fps;
   this->enc_opened_ms_ = millis();
+  this->drifting_ = false;
   ESP_LOGI(TAG, "Encoding %ux%u at %u fps%s, keyframe every %u frames, %u bit/s", this->width_, this->height_, fps,
            this->fps_ ? "" : " (measured)", static_cast<unsigned>(cfg.gop), static_cast<unsigned>(bitrate));
   return true;
@@ -369,12 +372,19 @@ void H264Encoder::task_loop_() {
     if (this->enc_ != nullptr &&
         (this->enc_w_ != this->width_ || this->enc_h_ != this->height_ || this->enc_type_ != this->type_))
       this->close_encoder_();
-    if (this->enc_ != nullptr && this->fps_ == 0 && millis() - this->enc_opened_ms_ >= REOPEN_MIN_MS) {
-      // Measured rate drifted from the one the stream declares: restart the
-      // stream description (a new IDR with new timing).
+    if (this->enc_ != nullptr && this->fps_ == 0) {
+      // Measured rate drifted from the one the stream declares, and stayed
+      // off: restart the stream description (a new IDR with new timing).
       const float measured = this->target_fps_();
-      if (std::fabs(measured - this->enc_fps_) > FPS_TOLERANCE * this->enc_fps_)
+      const uint32_t now = millis();
+      if (std::fabs(measured - this->enc_fps_) <= FPS_TOLERANCE * this->enc_fps_) {
+        this->drifting_ = false;
+      } else if (!this->drifting_) {
+        this->drifting_ = true;
+        this->drift_since_ms_ = now;
+      } else if (now - this->drift_since_ms_ >= DRIFT_MS && now - this->enc_opened_ms_ >= REOPEN_MIN_MS) {
         this->close_encoder_();
+      }
     }
     if (this->enc_ == nullptr) {
       if (!this->open_encoder_()) {
