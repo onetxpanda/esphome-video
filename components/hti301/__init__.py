@@ -23,11 +23,13 @@ from esphome.components.video_controls import (
     select_control,
 )
 from esphome.components.video_core import (
+    DEVICE_ID_SCHEMA,
     PALETTE_KEYS,
     PALETTE_LABELS,
     ImageSource,
     PaletteTarget,
     RadiometricSource,
+    inherit_device_id,
 )
 import esphome.config_validation as cv
 from esphome.const import (
@@ -75,8 +77,10 @@ Mode = hti301_ns.enum("Mode", is_class=True)
 Range = hti301_ns.enum("Range", is_class=True)
 
 CONFIG_SCHEMA = cv.All(
+    inherit_device_id("controls.*", CONF_STREAMING, CONF_USB_STATUS),
     usb_host.usb_device_schema(HTI301, VID, PID).extend(
         {
+            **DEVICE_ID_SCHEMA,
             # radiometric: 14-bit raw values, converted here to temperatures.
             # processed: the camera's own image (palette applied on the camera).
             cv.Optional(CONF_MODE, default="radiometric"): cv.one_of(*MODES, lower=True),

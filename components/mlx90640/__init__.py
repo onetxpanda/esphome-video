@@ -4,7 +4,7 @@ image processing). Feed it to a `radiometric` component."""
 import esphome.codegen as cg
 from esphome.components import i2c
 from esphome.components.video_controls import new_select_control, select_control
-from esphome.components.video_core import RadiometricSource
+from esphome.components.video_core import DEVICE_ID_SCHEMA, RadiometricSource, inherit_device_id
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 
@@ -36,10 +36,12 @@ def _refresh_rate(value):
     raise cv.Invalid(f"refresh_rate must be one of {', '.join(REFRESH_RATES)}")
 
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.All(
+    inherit_device_id("controls.*"),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(MLX90640),
+            **DEVICE_ID_SCHEMA,
             # Sub-page rate. A full frame takes two sub-pages.
             cv.Optional(CONF_REFRESH_RATE, default="16Hz"): _refresh_rate,
             cv.Optional(CONF_FRAME_MODE, default="interpolate"): cv.one_of(*FRAME_MODES, lower=True),
@@ -54,7 +56,7 @@ CONFIG_SCHEMA = (
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
-    .extend(i2c.i2c_device_schema(0x33))
+    .extend(i2c.i2c_device_schema(0x33)),
 )
 
 
