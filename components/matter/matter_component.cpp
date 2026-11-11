@@ -13,7 +13,9 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
+#include <esp_attr.h>
 #include <esp_matter_client.h>
+#include <esp_ota_ops.h>
 #include <esp_random.h>
 #include <nvs.h>
 #include <string>
@@ -147,6 +149,15 @@ static bool load_or_generate_commissioning_data(uint16_t &discriminator,
 }
 
 namespace esphome::matter {
+
+// Start guard: set while Matter is starting and for its first minute, cleared
+// after. If the device resets with it set, Matter crashed it, and the next
+// boot comes up without Matter (so the API is reachable and the crash report
+// can be read) instead of resetting again.
+static constexpr uint32_t START_GUARD_SET = 0x4D545231;
+static constexpr uint32_t START_GUARD_MS = 60000;
+static RTC_NOINIT_ATTR uint32_t
+    start_guard; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 MatterComponent *global_matter_component =
     nullptr; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -301,6 +312,19 @@ static void event_callback(const ChipDeviceEvent *event, intptr_t arg) {
 
 void MatterComponent::setup() {
   global_matter_component = this;
+  if (start_guard == START_GUARD_SET) {
+    start_guard = 0;
+    ESP_LOGE(TAG, "The device reset while Matter was starting last boot; "
+                  "Matter stays off this boot");
+    this->status_set_error(LOG_STR("Matter crashed on the last boot"));
+    this->mark_failed();
+    return;
+  }
+  // A crash from here on is Matter's: keep this firmware (the next boot comes
+  // up without Matter) rather than rolling back to the previous one.
+  esp_ota_mark_app_valid_cancel_rollback();
+  start_guard = START_GUARD_SET;
+  this->set_timeout(START_GUARD_MS, []() { start_guard = 0; });
   uint16_t discriminator;
   uint32_t passcode;
   if (!load_or_generate_commissioning_data(discriminator, passcode)) {

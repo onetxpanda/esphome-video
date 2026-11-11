@@ -182,6 +182,7 @@ bool MatterCamera::build_endpoint(esp_matter::endpoint_t *endpoint) {
 
   // camera::add() gives the stream management cluster the Video, Audio and
   // Snapshot features. No audio is sent and snapshot requests fail.
+  gCameraDevice.Init();
   esp_matter::endpoint::camera::config_t cam_config;
   if (esp_matter::endpoint::camera::add(endpoint, &cam_config) != ESP_OK) {
     ESP_LOGE(TAG, "Could not add the camera device type");
@@ -229,6 +230,11 @@ void MatterCamera::on_matter_started() {
 
 // ---- Component -------------------------------------------------------------
 
+void MatterCamera::set_matter(matter::MatterComponent *matter) {
+  this->matter_ = matter;
+  matter->register_mapping(new StartedHook(this, this->endpoint_id_));  // NOLINT
+}
+
 void MatterCamera::setup() {
   esp_work_queue_config_t wq = ESP_WORK_QUEUE_CONFIG_DEFAULT();
   wq.stack_size = WORK_QUEUE_STACK;
@@ -237,12 +243,8 @@ void MatterCamera::setup() {
     this->mark_failed();
     return;
   }
-  gCameraDevice.Init();
   if (this->encoder_ != nullptr)
     this->encoder_->add_encoded_sink(this);
-  // The matter component sets up after this one; its endpoints and Matter
-  // itself start in its setup, which then runs the hook.
-  this->matter_->register_mapping(new StartedHook(this, this->endpoint_id_));  // NOLINT
 }
 
 void MatterCamera::loop() {
