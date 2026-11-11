@@ -69,6 +69,9 @@ class H264Encoder : public Component {
     return input;
   }
   size_t source_count() const { return this->source_names_.size(); }
+  // Size of the stream being encoded; 0 until the encoder has opened.
+  uint16_t get_encoded_width() const { return this->enc_w_; }
+  uint16_t get_encoded_height() const { return this->enc_h_; }
   uint8_t get_active_source() const { return this->active_source_; }
   // Switches the encoded source. The next frame is a keyframe; a different
   // size or format reconfigures the encoder. Thread-safe.
