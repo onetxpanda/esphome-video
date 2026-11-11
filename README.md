@@ -14,6 +14,8 @@ encoders; there is no software encoding.
 | `overlay` | Draws a frame's annotations (e.g. min/max/centre markers with values) into the image. |
 | `h264_encoder` | ESP32-P4 hardware H.264 encoder, with a `select` platform to switch between sources. |
 | `rtsp_server` | Serves the encoder's output over RTSP (RTP over TCP). |
+| `matter` | Matter device support (from [esphome-matter](https://github.com/DavidvtWout/esphome-matter), Apache 2.0). |
+| `matter_camera` | A Matter camera: controllers such as Home Assistant stream the encoder's output live over WebRTC. |
 | `video_camera` | ESPHome camera entity (Home Assistant, web server), JPEG from the P4's hardware encoder. |
 | `video_test_pattern` | Synthetic image source for checking encoders and streams. |
 | `video_palette` | One select entity choosing the palette of several ISPs and cameras at once. |
@@ -130,6 +132,40 @@ mode it produces images itself, so an encoder or `video_camera` can take it
 as a `source:` directly. To switch between the two at runtime, give
 `h264_encoder` both as sources and use its select (see
 `tests/esphome/p4-hti301.yaml`).
+
+### Matter camera
+
+`matter_camera` makes the device a Matter camera (device type 0x0142).
+Controllers that support Matter cameras (Home Assistant 2026.11 and later
+with its Matter Server, Apple Home, ...) show it with live video, streamed
+over WebRTC from the same encoder that feeds `rtsp_server`. The encoder runs
+while either has a viewer.
+
+```yaml
+network:
+  enable_ipv6: true      # Matter needs IPv6
+
+wifi:                    # Matter here runs over Wi-Fi (not Ethernet)
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+matter:
+
+matter_camera:
+  encoder: encoder       # an h264_encoder
+  endpoint: 1            # default
+
+text_sensor:
+  - platform: matter
+    manual_pairing_code:
+      name: "Matter Pairing Code"
+    qr_code:
+      name: "Matter QR Code"
+```
+
+To add the camera, use the pairing code (or QR code) in the controller, for
+example Home Assistant's "Add Matter device". The device needs PSRAM. The
+camera has video only: no audio and no snapshots.
 
 ### Options
 
@@ -359,6 +395,29 @@ receives, it must be its source's only consumer. A source with an overlay
 and another consumer fails at setup with an error. Attach other consumers to
 the overlay instead.
 
+### Matter camera
+
+The camera endpoint carries the Camera AV Stream Management and WebRTC
+Transport Provider clusters. A controller allocates a video stream, then
+sends a WebRTC offer through the WebRTC Transport Provider cluster; the
+answer and the ICE candidates go back the same way, so Matter carries all
+the signaling. The media goes directly from the device to the viewer as
+H.264 in RTP over DTLS-SRTP.
+
+The cluster delegates and the signaling bridge come from Espressif's
+esp-matter camera example (standalone mode, release v1.6). WebRTC itself is
+Espressif's ESP-IDF port of Amazon's KVS WebRTC SDK, fetched at a pinned
+commit when the firmware is built. Its own camera, ISP and encoder code is
+left out: `matter_camera` is one of the encoder's consumers and passes each
+access unit to KVS's frame bus, from which every WebRTC session sends it.
+KVS asks the encoder for a keyframe when a session starts or drops a frame.
+KVS keeps its buffers and task stacks in PSRAM, and mbedTLS and the Matter
+stack are switched to PSRAM too, so a session costs little internal RAM.
+
+`matter` downloads Espressif's esp_matter component (esphome-matter's
+build) and drops its pins of the ESP32-P4 Wi-Fi libraries, so ESPHome's
+`esp32_hosted` versions are used.
+
 ## Tests
 
 `tests/run_tests.py` runs:
@@ -372,7 +431,7 @@ the overlay instead.
 - the RTSP server on the host against ffmpeg, ffprobe and GStreamer clients;
 - the encoder's build guard;
 - ESPHome configurations: invalid ones must be rejected with the expected
-  message, and valid ones must compile for the ESP32-P4 without warnings in
-  these components.
+  message, and valid ones (including a Matter camera) must compile for the
+  ESP32-P4 without warnings in these components.
 
 `--skip-esphome` skips the ESPHome compiles.

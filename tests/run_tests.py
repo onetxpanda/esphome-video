@@ -10,7 +10,8 @@
    GStreamer rtspsrc, three concurrent clients, the client limit, raw-socket
    protocol checks, and a client that stops reading.
 3. The same server under ThreadSanitizer with concurrent clients.
-4. Optional: ESPHome configs (valid compile for ESP32-P4, invalid ones rejected).
+4. Optional: ESPHome configs (valid compile for ESP32-P4, invalid ones rejected),
+   including a Matter camera.
 
 Usage: tests/run_tests.py [--esphome PATH] [--skip-esphome]
 Needs: g++, ffmpeg/ffprobe (with libx264, used only to make the test stream),
@@ -369,7 +370,7 @@ def esphome_tests(esphome):
         r = run([esphome, "compile", yaml], cwd=d, timeout=1800)
         ours = [ln for ln in (r.stdout + r.stderr).splitlines() if "warning:" in ln and re.search(
             r"components/(assert_capture|video_core|video_controls|mlx90640|hti301|radiometric|isp|overlay|video_camera|"
-            r"video_test_pattern|video_switch|h264_encoder|rtsp_server|task_stats)/", ln)]
+            r"video_test_pattern|video_switch|h264_encoder|rtsp_server|task_stats|matter|matter_camera)/", ln)]
         if not check(not ours, f"{yaml}: no compiler warnings in our components"):
             print("\n".join(ours[:10]))
         if not check(r.returncode == 0, f"{yaml} compiles"):
