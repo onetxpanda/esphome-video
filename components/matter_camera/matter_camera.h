@@ -21,13 +21,14 @@ class MatterCamera : public Component, public h264_encoder::EncodedFrameSink {
 
   void set_encoder(h264_encoder::H264Encoder *encoder) { this->encoder_ = encoder; }
   void set_endpoint_id(uint16_t endpoint_id) { this->endpoint_id_ = endpoint_id; }
-  void set_matter(matter::MatterComponent *matter) { this->matter_ = matter; }
+  // Registers the post-start hook; call after set_endpoint_id().
+  void set_matter(matter::MatterComponent *matter);
 
   void setup() override;
   void loop() override;
   void dump_config() override;
-  // Before the matter component, which creates the endpoints in its setup.
-  float get_setup_priority() const override { return setup_priority::AFTER_CONNECTION; }
+  // After the matter component, which builds the endpoint and starts Matter.
+  float get_setup_priority() const override { return setup_priority::AFTER_CONNECTION - 10.0f; }
 
   // EncodedFrameSink (called on the encoder's task)
   void on_encoded_frame(const uint8_t *data, size_t length, uint32_t timestamp_ms, bool keyframe) override;
