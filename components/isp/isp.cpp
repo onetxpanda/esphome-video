@@ -5,6 +5,13 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+
+// The task's stack is in PSRAM: internal RAM is needed by the network stack,
+// USB and (with Matter) the WebRTC stack.
+static constexpr UBaseType_t TASK_STACK_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
 #ifdef USE_ISP_PPA
 #include <esp_heap_caps.h>
 #endif
@@ -45,7 +52,8 @@ void Isp::setup() {
 #endif
   // Processing waits for frames on this task; tone mapping and CPU scaling
   // need little stack, sinks (overlay, encoder hand-off) a little more.
-  if (xTaskCreate(Isp::task_entry_, "isp", 6144, this, 4, &this->task_) != pdPASS)
+  if (xTaskCreatePinnedToCoreWithCaps(Isp::task_entry_, "isp", 6144, this, 4, &this->task_, tskNO_AFFINITY,
+                                      TASK_STACK_CAPS) != pdPASS)
     this->mark_failed(LOG_STR("Cannot start the ISP task"));
 }
 

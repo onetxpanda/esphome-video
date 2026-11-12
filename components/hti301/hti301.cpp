@@ -12,6 +12,13 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+
+// The task's stack is in PSRAM: internal RAM is needed by the network stack,
+// USB and (with Matter) the WebRTC stack.
+static constexpr UBaseType_t TASK_STACK_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
 namespace esphome {
 namespace hti301 {
 
@@ -59,7 +66,8 @@ void HTI301::setup() {
   if (this->is_failed())
     return;
   // 8 KB: sinks (radiometric processing) run on this task.
-  if (xTaskCreate(HTI301::task_entry_, "hti301", 8192, this, 4, &this->task_) != pdPASS) {
+  if (xTaskCreatePinnedToCoreWithCaps(HTI301::task_entry_, "hti301", 8192, this, 4, &this->task_,
+                                      tskNO_AFFINITY, TASK_STACK_CAPS) != pdPASS) {
     this->mark_failed(LOG_STR("Cannot start the processing task"));
     return;
   }

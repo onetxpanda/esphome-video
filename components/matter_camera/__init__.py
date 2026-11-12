@@ -217,5 +217,14 @@ async def to_code(config):
     require_mbedtls_ecp()
     # A DTLS session's buffers are tens of KB: keep them in PSRAM.
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC", True)
+    # lwIP's buffers in PSRAM (what `wifi: use_psram: true` sets): with Matter,
+    # WebRTC and a video pipeline, internal RAM otherwise runs out once the
+    # network is busy.
+    add_idf_sdkconfig_option("CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP", True)
+    # For the same reason, the stacks of the Wi-Fi co-processor link's tasks
+    # and of mDNS go to PSRAM.
+    add_idf_sdkconfig_option("CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM", True)
+    add_idf_sdkconfig_option("CONFIG_MDNS_TASK_CREATE_FROM_INTERNAL", False)
+    add_idf_sdkconfig_option("CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM", True)
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_SSL_PROTO_DTLS", True)
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_SSL_DTLS_SRTP", True)
