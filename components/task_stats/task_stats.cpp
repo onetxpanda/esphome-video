@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstring>
 
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
+#include <esp_private/freertos_debug.h>
+
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -17,6 +21,44 @@ void TaskStats::dump_config() {
 #ifdef USE_SENSOR
   LOG_SENSOR("  ", "CPU load", this->load_);
 #endif
+}
+
+// Tasks whose stacks are in internal RAM, largest first: the stacks that
+// compete with everything else for it. Logged whenever the task count changes.
+static void log_internal_stacks(const TaskStatus_t *st, UBaseType_t n) {
+  struct Row {
+    const char *name;
+    size_t size;
+  };
+  std::vector<Row> rows;
+  size_t total = 0;
+  for (UBaseType_t i = 0; i < n; i++) {
+    const TaskStatus_t &t = st[i];
+    if (t.pxStackBase == nullptr || !esp_ptr_internal(t.pxStackBase))
+      continue;
+    // The snapshot's end of stack is its highest address; the stack grows down
+    // from it to pxStackBase.
+    TaskSnapshot_t snap{};
+    size_t size = 0;
+    if (vTaskGetSnapshot(t.xHandle, &snap) == pdTRUE && snap.pxEndOfStack != nullptr)
+      size = reinterpret_cast<const uint8_t *>(snap.pxEndOfStack) -
+             reinterpret_cast<const uint8_t *>(t.pxStackBase) + sizeof(StackType_t);
+    rows.push_back(Row{t.pcTaskName, size});
+    total += size;
+  }
+  std::sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) { return a.size > b.size; });
+  char list[512];
+  size_t len = 0;
+  list[0] = '\0';
+  for (const Row &r : rows) {
+    const int w = std::snprintf(list + len, sizeof(list) - len, "%s%.16s %u", len ? ", " : "", r.name,
+                                static_cast<unsigned>(r.size));
+    if (w < 0 || static_cast<size_t>(w) >= sizeof(list) - len)
+      break;
+    len += static_cast<size_t>(w);
+  }
+  ESP_LOGI(TAG, "%u tasks; stacks in internal RAM: %u bytes in %u tasks: %s", static_cast<unsigned>(n),
+           static_cast<unsigned>(total), static_cast<unsigned>(rows.size()), list);
 }
 
 void TaskStats::update() {
@@ -46,6 +88,10 @@ void TaskStats::update() {
     }
     rows.push_back(Row{t.pcTaskName, dt});
     next.push_back(Seen{t.xTaskNumber, t.ulRunTimeCounter});
+  }
+  if (n != this->last_task_count_) {
+    this->last_task_count_ = n;
+    log_internal_stacks(st.data(), n);
   }
   const configRUN_TIME_COUNTER_TYPE span = total - this->prev_total_;
   this->prev_ = std::move(next);
@@ -90,6 +136,12 @@ void TaskStats::update() {
   ESP_LOGI(TAG, "Over %.1f s: CPU %.1f%% in use; idle: core 0 %.1f%%, core 1 %.1f%%", span / 1e6f, load, idle[0],
            configNUMBER_OF_CORES > 1 ? idle[configNUMBER_OF_CORES - 1] : 0.0f);
   ESP_LOGI(TAG, "Tasks, %% of one core: %s", list);
+  multi_heap_info_t internal{};
+  heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL);
+  ESP_LOGI(TAG, "Internal RAM: %u bytes free, largest block %u, lowest %u; PSRAM: %u bytes free",
+           static_cast<unsigned>(internal.total_free_bytes), static_cast<unsigned>(internal.largest_free_block),
+           static_cast<unsigned>(internal.minimum_free_bytes),
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 #ifdef USE_SENSOR
   if (this->load_ != nullptr)
     this->load_->publish_state(load);

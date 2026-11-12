@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <esp_attr.h>
+#include <esp_heap_caps.h>
 #include <esp_matter_client.h>
 #include <esp_random.h>
 #include <nvs.h>
@@ -309,6 +310,11 @@ static void event_callback(const ChipDeviceEvent *event, intptr_t arg) {
   }
 }
 
+static void log_internal_ram(const char *stage) {
+  ESP_LOGD(TAG, "Internal RAM %s: %u bytes free", stage,
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+}
+
 void MatterComponent::setup() {
   global_matter_component = this;
   if (start_guard == START_GUARD_SET) {
@@ -349,6 +355,7 @@ void MatterComponent::setup() {
     }
   }
 
+  log_internal_ram("before Matter");
   esp_matter::node::config_t node_config;
   esp_matter::node_t *node = esp_matter::node::create(
       &node_config, endpoint_attribute_update_cb, nullptr);
@@ -362,6 +369,7 @@ void MatterComponent::setup() {
     this->mark_failed();
     return;
   }
+  log_internal_ram("after the endpoints");
 
 #ifdef USE_OPENTHREAD
   // ESPHome owns the OpenThread task/stack. connectedhomeip still needs its
@@ -385,10 +393,12 @@ void MatterComponent::setup() {
   } else {
     ESP_LOGD(TAG, "Matter started successfully");
   }
+  log_internal_ram("after Matter start");
 
   esp_matter::client::binding_manager_init();
   replay_attribute_triggers(this);
   this->initialize_endpoint_mappings_();
+  log_internal_ram("after the endpoint start hooks");
 #ifdef USE_TEXT_SENSOR
   this->publish_fabric_sensors_();
 #endif
