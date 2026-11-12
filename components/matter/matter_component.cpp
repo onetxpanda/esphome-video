@@ -15,7 +15,6 @@
 #include <cstring>
 #include <esp_attr.h>
 #include <esp_matter_client.h>
-#include <esp_ota_ops.h>
 #include <esp_random.h>
 #include <nvs.h>
 #include <string>
@@ -320,9 +319,8 @@ void MatterComponent::setup() {
     this->mark_failed();
     return;
   }
-  // A crash from here on is Matter's: keep this firmware (the next boot comes
-  // up without Matter) rather than rolling back to the previous one.
-  esp_ota_mark_app_valid_cancel_rollback();
+  // A reset before the timeout clears this means Matter crashed while
+  // starting; the next boot then runs without Matter.
   start_guard = START_GUARD_SET;
   this->set_timeout(START_GUARD_MS, []() { start_guard = 0; });
   uint16_t discriminator;
