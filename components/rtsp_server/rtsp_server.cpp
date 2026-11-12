@@ -4,6 +4,13 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+
+// The task's stack is in PSRAM: internal RAM is needed by the network stack,
+// USB and (with Matter) the WebRTC stack.
+static constexpr UBaseType_t TASK_STACK_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
 namespace esphome {
 namespace rtsp_server {
 
@@ -32,7 +39,8 @@ void RtspServer::setup() {
   };
   this->core_ = std::make_unique<RtspServerCore>(this->config_);
   this->encoder_->add_encoded_sink(this);
-  if (xTaskCreate(RtspServer::task_entry_, "rtsp_srv", 6144, this, 5, &this->task_) != pdPASS)
+  if (xTaskCreatePinnedToCoreWithCaps(RtspServer::task_entry_, "rtsp_srv", 6144, this, 5, &this->task_,
+                                      tskNO_AFFINITY, TASK_STACK_CAPS) != pdPASS)
     this->mark_failed(LOG_STR("Could not start the server task"));
 }
 

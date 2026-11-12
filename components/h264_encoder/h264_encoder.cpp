@@ -3,6 +3,13 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
+
+// The task's stack is in PSRAM: internal RAM is needed by the network stack,
+// USB and (with Matter) the WebRTC stack.
+static constexpr UBaseType_t TASK_STACK_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+
 #include <cmath>
 #include <cstring>
 
@@ -66,7 +73,8 @@ void H264Encoder::setup() {
   if (this->qp_min_ > this->qp_max_)
     this->qp_min_ = this->qp_max_;
   // The task also runs the sinks (e.g. RTSP packetization), hence 6 KB.
-  if (xTaskCreate(H264Encoder::task_entry_, "h264_enc", 6144, this, 5, &this->task_) != pdPASS)
+  if (xTaskCreatePinnedToCoreWithCaps(H264Encoder::task_entry_, "h264_enc", 6144, this, 5, &this->task_,
+                                      tskNO_AFFINITY, TASK_STACK_CAPS) != pdPASS)
     this->mark_failed(LOG_STR("Could not start the encoder task"));
 }
 
