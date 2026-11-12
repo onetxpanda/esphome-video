@@ -3,6 +3,8 @@
 #include "esphome/components/network/util.h"
 #include "esphome/core/log.h"
 
+#include <esp_heap_caps.h>
+
 #include <esp_matter.h>
 #include <app/server/Server.h>
 #include <data_model_provider/clusters/camera_av_stream_management/integration.h>
@@ -114,6 +116,11 @@ extern "C" esp_err_t video_capture_get_active_resolution(video_resolution_t *res
 namespace esphome {
 namespace matter_camera {
 
+static void log_internal_ram(const char *stage) {
+  ESP_LOGD(TAG, "Internal RAM %s: %u bytes free", stage,
+           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+}
+
 static void webrtc_event_handler(app_webrtc_event_data_t *event, void *user_ctx) {
   (void) user_ctx;
   if (event == nullptr)
@@ -158,17 +165,20 @@ static void webrtc_start(void *arg) {
   cfg.peer_connection_if = kvs_peer_connection_if_get();
   cfg.video_capture = capture_interface();
 
+  log_internal_ram("before WebRTC");
   WEBRTC_STATUS status = app_webrtc_init(&cfg);
   if (status != WEBRTC_STATUS_SUCCESS) {
     ESP_LOGE(TAG, "WebRTC init failed: 0x%08" PRIx32, static_cast<uint32_t>(status));
     return;
   }
+  log_internal_ram("after WebRTC init");
   status = app_webrtc_run();
   if (status != WEBRTC_STATUS_SUCCESS) {
     ESP_LOGE(TAG, "WebRTC start failed: 0x%08" PRIx32, static_cast<uint32_t>(status));
     app_webrtc_terminate();
     return;
   }
+  log_internal_ram("after WebRTC start");
   ESP_LOGI(TAG, "WebRTC ready");
 }
 

@@ -3,7 +3,8 @@
 // Each FreeRTOS task's share of the CPU over the last update interval, from
 // the kernel's run-time statistics, logged as "% of one core" (a task busy
 // on one core all the time is 100%), with each core's idle time. The load
-// sensor is the CPU in use, % of all cores.
+// sensor is the CPU in use, % of all cores. Also logs internal RAM: free,
+// largest block and lowest point, and which tasks have their stacks there.
 
 #include <cstdint>
 #include <vector>
@@ -37,6 +38,7 @@ class TaskStats : public PollingComponent {
   std::vector<Seen> prev_;
   configRUN_TIME_COUNTER_TYPE prev_total_{0};
   bool have_prev_{false};
+  UBaseType_t last_task_count_{0};
   uint8_t top_{12};
 #ifdef USE_SENSOR
   sensor::Sensor *load_{nullptr};
