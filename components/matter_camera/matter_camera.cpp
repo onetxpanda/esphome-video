@@ -180,10 +180,14 @@ bool MatterCamera::build_endpoint(esp_matter::endpoint_t *endpoint) {
   if (self == nullptr)
     return false;
 
-  // camera::add() gives the stream management cluster the Video, Audio and
-  // Snapshot features. No audio is sent and snapshot requests fail.
+  // The stream management cluster needs its features set before it is
+  // created (it aborts otherwise). Video, Audio and Snapshot as in Espressif's
+  // camera example; no audio is sent and snapshot requests fail.
   gCameraDevice.Init();
   esp_matter::endpoint::camera::config_t cam_config;
+  namespace avsm = esp_matter::cluster::camera_av_stream_management::feature;
+  cam_config.camera_av_stream_management.feature_flags =
+      avsm::audio::get_id() | avsm::video::get_id() | avsm::snapshot::get_id();
   if (esp_matter::endpoint::camera::add(endpoint, &cam_config) != ESP_OK) {
     ESP_LOGE(TAG, "Could not add the camera device type");
     return false;
