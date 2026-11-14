@@ -76,6 +76,16 @@ static std::array<isp::Rgb, 256> gray_palette() {
   return p;
 }
 
+static void test_sensor_frame_due() {
+  using radiometric::sensor_frame_due;
+  CHECK(sensor_frame_due(5, 0, 1000));  // no frame yet
+  CHECK(!sensor_frame_due(1999, 1000, 1000));
+  CHECK(sensor_frame_due(2000, 1000, 1000));
+  // Across the millis() wrap: 1000 ms after 0xFFFFFF00 is 0x2E8.
+  CHECK(!sensor_frame_due(0x2E7u, 0xFFFFFF00u, 1000));
+  CHECK(sensor_frame_due(0x2E8u, 0xFFFFFF00u, 1000));
+}
+
 static void test_isp() {
   isp::CpuIsp c;
   c.set_palette(gray_palette());
@@ -429,6 +439,7 @@ int main() {
   test_analyze_matches_process();
   test_valid_range_and_median();
   test_radiometric();
+  test_sensor_frame_due();
   test_isp();
   test_large_frames();
   bench();

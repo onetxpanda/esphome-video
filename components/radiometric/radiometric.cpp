@@ -1,5 +1,6 @@
 #include "radiometric.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -16,6 +17,7 @@ void Radiometric::setup() {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->options_.median_stat = this->median_sensor_ != nullptr;  // only computed for its sensor
   this->options_changed_ = true;  // applied by the source's task with the first frame
+  this->temporal_.store(this->options_.temporal_frames > 1);
 }
 
 void Radiometric::dump_config() {
@@ -38,6 +40,7 @@ void Radiometric::set_temporal_frames(float n) {
   const long v = std::lround(n);
   this->options_.temporal_frames = static_cast<uint8_t>(v < 1 ? 1 : (v > MAX_TEMPORAL ? MAX_TEMPORAL : v));
   this->options_changed_ = true;
+  this->temporal_.store(this->options_.temporal_frames > 1);
 }
 
 void Radiometric::set_median_filter(bool v) {
@@ -52,9 +55,23 @@ void Radiometric::set_outlier_level(float v) {
   this->options_changed_ = true;
 }
 
-bool Radiometric::wants_frames() const { return this->has_sensors_() || this->sinks_.any_wants(); }
+// Consumers downstream (an ISP feeding a viewer or a snapshot) get every frame.
+// With none, the sensors alone take one frame per update (at most 1 s apart),
+// and the source skips converting the frames in between. A temporal average
+// needs consecutive frames, so it keeps every frame.
+bool Radiometric::wants_frames() const {
+  if (this->sinks_.any_wants())
+    return true;
+  if (!this->has_sensors_())
+    return false;
+  if (this->temporal_.load())
+    return true;
+  const uint32_t period = std::min<uint32_t>(this->get_update_interval(), 1000);
+  return sensor_frame_due(millis(), this->last_frame_ms_.load(), period);
+}
 
 void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
+  this->last_frame_ms_.store(millis());
   {
     std::lock_guard<std::mutex> lock(this->mutex_);
     if (this->options_changed_) {
