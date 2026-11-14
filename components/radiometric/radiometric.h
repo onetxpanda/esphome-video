@@ -64,6 +64,10 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
   Stats latest_;
   bool log_timing_{false};
   std::atomic<uint32_t> process_us_{0}, processed_{0};
+  // wants_frames(): when the last frame arrived, and whether a temporal
+  // average needs every frame.
+  std::atomic<uint32_t> last_frame_ms_{0};
+  std::atomic<bool> temporal_{false};
   uint32_t last_timing_ms_{0};
   bool memory_error_logged_{false};
   bool latest_new_{false};

@@ -38,6 +38,12 @@ struct Stats {
 
 static constexpr uint8_t MAX_TEMPORAL = 8;
 
+// Sensors alone need one frame per `period_ms`. Whether one is due at `now`
+// when the last was taken at `last` (0: none yet). Correct across millis() wrap.
+inline bool sensor_frame_due(uint32_t now, uint32_t last, uint32_t period_ms) {
+  return last == 0 || now - last >= period_ms;
+}
+
 class Processor {
  public:
   void set_options(const Options &o);

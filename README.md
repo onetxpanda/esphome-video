@@ -316,7 +316,10 @@ and drops frames instead of stopping the device.
   ESPHome's camera clients on the main loop.
 
 Nothing upstream does work for nobody: a source asks its sinks
-`wants_frames()` and idles while none do.
+`wants_frames()` and idles while none do. A `radiometric` with sensors but
+nothing downstream wanting frames takes one frame per `update_interval` (at
+most 1 s apart), so its source converts only those. It takes every frame
+while something downstream wants frames, or while `temporal_frames` is above 1.
 
 ### Processing
 
