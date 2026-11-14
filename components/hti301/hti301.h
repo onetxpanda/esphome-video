@@ -137,6 +137,7 @@ class HTI301 : public usb_host::USBClient,
 
   // USB bus diagnosis while no camera is connected (main loop).
   void scan_bus_(uint32_t now);
+  void power_on_after_restart_(uint32_t now);
   std::string describe_hub_(usb_device_handle_t dev);
   int diag_request_(usb_device_handle_t dev, uint8_t type, uint8_t request, uint16_t value, uint16_t index,
                     uint16_t length, uint8_t *out);
@@ -234,7 +235,12 @@ class HTI301 : public usb_host::USBClient,
   std::atomic<bool> diag_busy_{false};
   usb_device_handle_t diag_dev_{nullptr};  // left open while a timed-out request is still in flight
   uint32_t next_scan_ms_{0};
-  uint32_t usb_power_on_ms_{0};  // when to power the port back on after restart_usb(); 0 = not pending
+  // restart_usb(): the port is powered on again once the host has freed what was on it.
+  bool usb_restarting_{false};
+  bool usb_bus_empty_{false};      // nothing enumerated since usb_empty_since_ms_
+  uint32_t usb_restart_ms_{0};     // when the port was powered off
+  uint32_t usb_retry_ms_{0};       // next power-on check
+  uint32_t usb_empty_since_ms_{0};
   std::string status_;
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *status_sensor_{nullptr};

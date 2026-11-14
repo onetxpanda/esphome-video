@@ -19,6 +19,13 @@
 // USB and (with Matter) the WebRTC stack.
 static constexpr UBaseType_t TASK_STACK_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 
+// restart_usb(): how long the port stays off at least, how often the power-on
+// is retried, how long the bus must be empty first, and when to give up.
+static constexpr uint32_t USB_OFF_MS = 500;
+static constexpr uint32_t USB_RETRY_MS = 100;
+static constexpr uint32_t USB_SETTLE_MS = 100;
+static constexpr uint32_t USB_RESTART_TIMEOUT_MS = 10000;
+
 namespace esphome {
 namespace hti301 {
 
@@ -116,12 +123,8 @@ void HTI301::loop() {
   this->run_stage_();
   this->run_commands_();
   const uint32_t now = millis();
-  if (this->usb_power_on_ms_ != 0 && static_cast<int32_t>(now - this->usb_power_on_ms_) >= 0) {
-    this->usb_power_on_ms_ = 0;
-    const esp_err_t err = usb_host_lib_set_root_port_power(true);
-    ESP_LOGI(TAG, "USB port powered on again: %s", esp_err_to_name(err));
-    this->next_scan_ms_ = now + 3000;
-  }
+  if (this->usb_restarting_)
+    this->power_on_after_restart_(now);
   this->scan_bus_(now);
   const uint32_t last = this->last_frame_ms_.load();
   this->publish_streaming_(this->stage_ == Stage::STREAMING && this->out_mode_.load() != UNKNOWN && last != 0 &&
@@ -694,14 +697,67 @@ void HTI301::calibrate() {
 }
 
 void HTI301::restart_usb() {
-  if (this->usb_power_on_ms_ != 0)
+  if (this->usb_restarting_)
     return;
   const esp_err_t err = usb_host_lib_set_root_port_power(false);
   ESP_LOGI(TAG, "USB port powered off for a restart: %s", esp_err_to_name(err));
   if (err != ESP_OK)
     return;
   this->set_status_("Restarting the USB port");
-  this->usb_power_on_ms_ = millis() + 500;
+  const uint32_t now = millis();
+  this->usb_restarting_ = true;
+  this->usb_bus_empty_ = false;
+  this->usb_restart_ms_ = now;
+  this->usb_retry_ms_ = now + USB_OFF_MS;
+}
+
+// The host powers the port again only after it has freed every device that
+// was on it (until then usb_host_lib_set_root_port_power(true) fails with
+// ESP_ERR_INVALID_STATE), and it frees a device only once every client has
+// closed it. So give back our own diagnostic handle, wait until nothing is
+// enumerated, leave the host a moment to recover the port, then power it on,
+// retrying while the host still reports the port busy.
+void HTI301::power_on_after_restart_(uint32_t now) {
+  if (static_cast<int32_t>(now - this->usb_retry_ms_) < 0)
+    return;
+  this->usb_retry_ms_ = now + USB_RETRY_MS;
+  if (this->diag_dev_ != nullptr && !this->diag_busy_.load()) {
+    // A request still in flight is flushed when the device goes, which clears diag_busy_.
+    usb_host_device_close(this->handle_, this->diag_dev_);
+    this->diag_dev_ = nullptr;
+  }
+  const bool timed_out = now - this->usb_restart_ms_ >= USB_RESTART_TIMEOUT_MS;
+  uint8_t addrs[16];
+  int count = 0;
+  if (usb_host_device_addr_list_fill(sizeof(addrs), addrs, &count) != ESP_OK)
+    count = 0;
+  if (!timed_out) {
+    if (count > 0) {
+      this->usb_bus_empty_ = false;
+      return;
+    }
+    if (!this->usb_bus_empty_) {
+      this->usb_bus_empty_ = true;
+      this->usb_empty_since_ms_ = now;
+      return;
+    }
+    if (now - this->usb_empty_since_ms_ < USB_SETTLE_MS)
+      return;
+  }
+  const esp_err_t err = usb_host_lib_set_root_port_power(true);
+  if (err == ESP_ERR_INVALID_STATE && !timed_out)
+    return;  // the port is not recovered yet
+  this->usb_restarting_ = false;
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "USB port not powered on again after %u ms: %s", static_cast<unsigned>(now - this->usb_restart_ms_),
+             esp_err_to_name(err));
+    this->set_status_(std::string("The USB port did not power on again (") + esp_err_to_name(err) +
+                      "); restart the device");
+    return;
+  }
+  ESP_LOGI(TAG, "USB port powered on again after %u ms", static_cast<unsigned>(now - this->usb_restart_ms_));
+  this->set_status_("USB port powered on again; waiting for the camera");
+  this->next_scan_ms_ = now + 3000;
 }
 
 bool HTI301::send_command_(Cmd kind, uint8_t value, uint16_t code) {
@@ -819,8 +875,8 @@ void HTI301::diag_done_(usb_transfer_t *t) {
   xSemaphoreGive(self->diag_sem_);
 }
 
-// One control request to `dev`, waited for (at most 200 ms). Returns the
-// number of data bytes received, or -1.
+// One control request to `dev`, waited for on the main loop (at most 200 ms).
+// Returns the number of data bytes received, or -1.
 int HTI301::diag_request_(usb_device_handle_t dev, uint8_t type, uint8_t request, uint16_t value, uint16_t index,
                           uint16_t length, uint8_t *out) {
   static constexpr size_t BUF = 64;
@@ -849,8 +905,16 @@ int HTI301::diag_request_(usb_device_handle_t dev, uint8_t type, uint8_t request
     this->diag_busy_.store(false);
     return -1;
   }
-  if (xSemaphoreTake(this->diag_sem_, pdMS_TO_TICKS(200)) != pdTRUE)
-    return -1;  // still in flight: diag_busy_ stays set until it completes
+  // The host library completes a transfer only while its events are handled,
+  // which usb_host does from the main loop: the one we are blocking. So handle
+  // them here while waiting.
+  const uint32_t start = millis();
+  while (xSemaphoreTake(this->diag_sem_, pdMS_TO_TICKS(2)) != pdTRUE) {
+    if (millis() - start >= 200)
+      return -1;  // still in flight: diag_busy_ stays set until it completes
+    uint32_t flags;
+    usb_host_lib_handle_events(0, &flags);
+  }
   if (t->status != USB_TRANSFER_STATUS_COMPLETED)
     return -1;
   const int n = t->actual_num_bytes - static_cast<int>(sizeof(usb_setup_packet_t));
@@ -896,7 +960,7 @@ std::string HTI301::describe_hub_(usb_device_handle_t dev) {
 // state of every hub port, and pick up the camera if it is there but its
 // connection event was missed.
 void HTI301::scan_bus_(uint32_t now) {
-  if (this->state_ != usb_host::USB_CLIENT_INIT || this->stage_ != Stage::IDLE ||
+  if (this->state_ != usb_host::USB_CLIENT_INIT || this->stage_ != Stage::IDLE || this->usb_restarting_ ||
       static_cast<int32_t>(now - this->next_scan_ms_) < 0)
     return;
   this->next_scan_ms_ = now + 10000;
