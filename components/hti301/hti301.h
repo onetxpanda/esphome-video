@@ -223,6 +223,18 @@ class HTI301 : public usb_host::USBClient,
   TemperatureTable table_;
   uint32_t sequence_{0};
 
+  // With log_timing: what the last converted frame was converted with, and
+  // its centre pixel (processing task writes, main loop logs).
+  struct CalibrationSample {
+    bool valid{false};
+    Metadata m;
+    Environment env{};
+    uint16_t center_raw{0};
+    float center_temp{NAN};
+  };
+  std::mutex calibration_mutex_;
+  CalibrationSample calibration_;
+
   // Statistics (any thread writes, main loop reads and resets).
   // Lost packets: those the controller never ran (skipped_), how many of them opened a transfer
   // (skipped_first_: the next transfer started late), the rest arrived with errors.

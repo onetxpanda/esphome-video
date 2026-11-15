@@ -256,6 +256,9 @@ isp:
 
 Several stages can be marked `log_timing: true` (`mlx90640`, `hti301`,
 `radiometric`, `isp`). They then log their per-stage times every 10 s.
+The `hti301` also logs what its last frame was converted with: the
+detector, shutter and core temperatures and calibration words from the
+frame, the scene parameters, and the centre pixel's raw value and temperature.
 
 ## How it works
 

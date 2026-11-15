@@ -641,6 +641,15 @@ void HTI301::process_radiometric_(const video::FrameRef &raw, uint32_t ts) {
     return;
   }
   this->convert_us_ += micros() - t0;
+  if (this->log_timing_) {
+    const size_t centre = static_cast<size_t>(this->image_rows_ / 2) * this->width_ + this->width_ / 2;
+    std::lock_guard<std::mutex> lock(this->calibration_mutex_);
+    this->calibration_.valid = true;
+    this->calibration_.m = m;
+    this->calibration_.env = env;
+    this->calibration_.center_raw = words[centre] & RAW_MASK;
+    this->calibration_.center_temp = f.temps()[centre];
+  }
   f.width = this->width_;
   f.height = this->image_rows_;
   f.timestamp_ms = ts;
@@ -1084,6 +1093,24 @@ void HTI301::report_(uint32_t now) {
              static_cast<unsigned>(lost), static_cast<unsigned>(skip), static_cast<unsigned>(first),
              static_cast<unsigned>(lost > skip ? lost - skip : 0), static_cast<unsigned>(err), static_cast<unsigned>(nob),
              n ? cus / 1000.0f / n : 0.0f, n && us > cus ? (us - cus) / 1000.0f / n : 0.0f, static_cast<unsigned>(this->restarts_));
+  }
+  if (this->log_timing_) {
+    CalibrationSample c;
+    {
+      std::lock_guard<std::mutex> lock(this->calibration_mutex_);
+      c = this->calibration_;
+      this->calibration_.valid = false;
+    }
+    if (c.valid) {
+      ESP_LOGI(TAG,
+               "Calibration: detector %.2f °C, shutter %.2f °C, core %.2f °C, cal_00 %u, cal_01..05 %g %g %g %g %g; "
+               "centre raw %u (camera's %u) = %.2f °C; emissivity %.2f, reflected %.1f °C, ambient %.1f °C, "
+               "humidity %.2f, distance %.1f m, correction %.2f",
+               c.m.fpa_temp, c.m.shutter_temp, c.m.core_temp, static_cast<unsigned>(c.m.cal_00), c.m.cal_01,
+               c.m.cal_02, c.m.cal_03, c.m.cal_04, c.m.cal_05, static_cast<unsigned>(c.center_raw),
+               static_cast<unsigned>(c.m.center_raw & RAW_MASK), c.center_temp, c.env.emissivity, c.env.reflected,
+               c.env.ambient, c.env.humidity, c.env.distance, c.env.correction);
+    }
   }
 }
 
