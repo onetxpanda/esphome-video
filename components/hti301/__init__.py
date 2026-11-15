@@ -59,6 +59,7 @@ CONF_RESTART_USB = "restart_usb"
 CONF_STREAMING = "streaming"
 CONF_USB_STATUS = "usb_status"
 CONF_LOG_TIMING = "log_timing"
+CONF_AUTO_CALIBRATE = "auto_calibrate"
 
 VID = 0x1514
 PID = 0x0001
@@ -118,6 +119,7 @@ CONFIG_SCHEMA = cv.All(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC, icon="mdi:usb"
             ),
             cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
+            cv.Optional(CONF_AUTO_CALIBRATE, default=True): cv.boolean,
         }
     ),
     only_on_variant(supported=[VARIANT_ESP32P4], msg_prefix="The HTI-301 (USB 2.0 high speed)"),
@@ -157,6 +159,7 @@ async def to_code(config):
     cg.add(var.set_transfers(config[CONF_TRANSFERS]))
     cg.add(var.set_packets_per_transfer(config[CONF_PACKETS_PER_TRANSFER]))
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
+    cg.add(var.set_auto_calibrate(config[CONF_AUTO_CALIBRATE]))
     if CONF_STREAMING in config:
         sens = await binary_sensor.new_binary_sensor(config[CONF_STREAMING])
         cg.add(var.set_streaming_sensor(sens))

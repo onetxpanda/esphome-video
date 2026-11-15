@@ -61,6 +61,10 @@ static constexpr uint32_t STREAMING_MS = 2000;  // the streaming sensor is on wh
 // Complete frames dropped after a mode or range change, while the camera
 // switches over. A guess (5 frames = 200 ms); not yet measured on a camera.
 static constexpr uint8_t SETTLE_FRAMES = 5;
+// Complete frames dropped after a calibration: while the shutter moves, frames
+// mix the old and new calibration (one read 7 C between -5.6 C before and
+// 21 C after). 25 frames = 1 s.
+static constexpr uint8_t CALIBRATE_SETTLE_FRAMES = 25;
 static constexpr uint8_t COMMAND_ATTEMPTS = 3;
 // ESP-IDF schedules an isochronous transfer in a 64-entry list less a
 // 3-entry margin: packets x interval must fit in 61.
@@ -109,6 +113,7 @@ void HTI301::dump_config() {
   const float h = this->env_humidity_.load();
   log_env("Humidity", std::isnan(h) ? h : h * 100.0f, " %");
   log_env("Distance", this->env_distance_.load(), " m");
+  ESP_LOGCONFIG(TAG, "  Automatic calibration: %s", YESNO(this->auto_calibrate_));
   ESP_LOGCONFIG(TAG, "  USB: %s", this->status_.empty() ? "not checked yet" : this->status_.c_str());
 #ifdef USE_BINARY_SENSOR
   LOG_BINARY_SENSOR("  ", "Streaming", this->streaming_sensor_);
@@ -249,6 +254,8 @@ void HTI301::run_stage_() {
         return;
       if (this->start_transfers_()) {
         this->stage_ = Stage::STREAMING;
+        this->calibration_schedule_.start(now);
+        this->detector_temp_.store(NAN);
         this->set_status_("Streaming");
         this->failures_ = 0;
         this->status_clear_warning();
@@ -622,10 +629,12 @@ void HTI301::task_loop_() {
 }
 
 void HTI301::process_radiometric_(const video::FrameRef &raw, uint32_t ts) {
-  if (this->rad_pool_ == nullptr || !this->rad_sinks_.any_wants())
-    return;
   const auto *words = reinterpret_cast<const uint16_t *>(raw.data());
   const Metadata m = parse_metadata(words, this->width_, this->image_rows_);
+  if (m.valid)
+    this->detector_temp_.store(m.fpa_temp);  // for the calibration schedule, wanted or not
+  if (this->rad_pool_ == nullptr || !this->rad_sinks_.any_wants())
+    return;
   video::RadiometricFrame f;
   f.buffer = this->rad_pool_->acquire();
   if (!f.buffer) {
@@ -796,7 +805,9 @@ void HTI301::command_succeeded_(Cmd kind, uint8_t value) {
       ESP_LOGI(TAG, "Camera palette: %s", video::PALETTE_NAMES[value]);
       break;
     case Cmd::CALIBRATE:
+      this->settle_.store(CALIBRATE_SETTLE_FRAMES);
       this->calibrate_want_ = false;
+      this->calibration_schedule_.done(millis(), this->detector_temp_.load());
       ESP_LOGI(TAG, "Calibration sent");
       break;
     default:
@@ -826,15 +837,26 @@ void HTI301::run_commands_() {
                cmd_name_(kind), COMMAND_ATTEMPTS);
       this->cmd_failures_ = 0;
       this->gave_up_[static_cast<uint8_t>(kind)] = this->cmd_value_;
-      if (kind == Cmd::CALIBRATE)
+      if (kind == Cmd::CALIBRATE) {
         this->calibrate_want_ = false;
+        this->calibration_schedule_.done(now, this->detector_temp_.load());  // try again on the schedule
+      }
       this->status_set_warning();
     }
     return;
   }
   if (static_cast<int32_t>(now - this->cmd_retry_ms_) < 0)
     return;
-  auto wanted = [this](Cmd k, uint8_t set, uint8_t want) {
+  // Once the camera has taken the mode, calibrate on the schedule (sent after
+  // any mode, range or palette change below).
+  if (this->auto_calibrate_ && !this->calibrate_want_ && this->out_mode_.load() != UNKNOWN) {
+    const float detector = this->detector_temp_.load();
+    if (this->calibration_schedule_.due(now, detector)) {
+      ESP_LOGD(TAG, "Calibrating on schedule (detector %.2f C)", detector);
+      this->calibrate_want_ = true;
+    }
+  }
+  auto wanted =[this](Cmd k, uint8_t set, uint8_t want) {
     return set != want && this->gave_up_[static_cast<uint8_t>(k)] != want;
   };
   if (wanted(Cmd::MODE, this->mode_set_, this->mode_want_)) {

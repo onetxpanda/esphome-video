@@ -211,7 +211,9 @@ isp:
   `palette` (processed mode: white_hot, black_hot, ironbow, lava, rainbow,
   iron_gray, red_hot, rainbow_2), `emissivity` (default 0.95), and
   `reflected_temperature`, `ambient_temperature`, `humidity`, `distance`
-  (left out: the values stored in the camera). `transfers` and
+  (left out: the values stored in the camera). `auto_calibrate` (default
+  true) sends the shutter calibration on a schedule, since the camera never
+  calibrates on its own. `transfers` and
   `packets_per_transfer` size the USB buffering (default 8 x 16 packets,
   16 ms). Binary sensor: `streaming` (on while frames arrive). Text sensor:
   `usb_status` (while no camera is connected, the USB devices the host sees
@@ -361,6 +363,16 @@ camera cannot report its mode, so after every stream start the component
 sends the configured mode, range and palette, and passes frames on only
 once the camera has accepted the mode. After a mode or range change it skips
 5 frames. If no complete frame arrives for 3 s, it restarts the stream.
+
+The camera never does a shutter calibration on its own. Its raw values drift
+as its detector warms, about 4 °C of reading per °C of detector (a cold
+start warms it by 5 °C or more), and only a calibration resets them. With
+`auto_calibrate`, the component sends one 30 s after the stream starts, then
+whenever the detector has moved 0.25 °C since the last one (at most every
+30 s), and at least every 10 minutes. In processed mode, where the detector's
+temperature is not available, only the time limits apply. A press of the
+`calibrate` button counts as one. After each calibration it skips 1 s of
+frames, which mix the old and new calibration while the shutter moves.
 While no camera is connected, it lists every 10 s the devices the USB host
 has enumerated and asks each hub for the state of its ports (empty, device
 attached, not enabled, over-current). With nothing enumerated, it reads

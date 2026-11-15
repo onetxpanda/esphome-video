@@ -488,6 +488,46 @@ static void test_environment() {
   CHECK(!parse_metadata(tiny.data(), 4, 2).valid);
 }
 
+// ---------------------------------------------------------------- calibration schedule
+
+static void test_calibration_schedule() {
+  CalibrationSchedule s;
+  // The first one CAL_FIRST_MS after the stream starts, detector known or not.
+  s.start(1000);
+  CHECK(!s.due(1000 + CAL_FIRST_MS - 1, 30.0f));
+  CHECK(s.due(1000 + CAL_FIRST_MS, 30.0f));
+  CHECK(s.due(1000 + CAL_FIRST_MS, NAN));
+  // Never within CAL_MIN_GAP_MS of the last, however far the detector moved.
+  s.done(40000, 30.0f);
+  CHECK(!s.due(40000 + CAL_MIN_GAP_MS - 1, 35.0f));
+  // After it, once the detector has moved CAL_DRIFT_C either way.
+  CHECK(!s.due(40000 + CAL_MIN_GAP_MS, 30.2f));
+  CHECK(s.due(40000 + CAL_MIN_GAP_MS, 30.25f));
+  CHECK(s.due(40000 + CAL_MIN_GAP_MS, 29.7f));
+  CHECK(!s.due(40000 + CAL_MIN_GAP_MS, NAN));
+  // At the latest CAL_MAX_GAP_MS after the last.
+  CHECK(!s.due(40000 + CAL_MAX_GAP_MS - 1, 30.0f));
+  CHECK(s.due(40000 + CAL_MAX_GAP_MS, 30.0f));
+  CHECK(s.due(40000 + CAL_MAX_GAP_MS, NAN));
+  // Sent with the detector unknown: the first known reading takes one.
+  s.done(700000, NAN);
+  CHECK(!s.due(700000 + CAL_MIN_GAP_MS - 1, 31.0f));
+  CHECK(s.due(700000 + CAL_MIN_GAP_MS, 31.0f));
+  CHECK(!s.due(700000 + CAL_MIN_GAP_MS, NAN));
+  // A restarted stream waits CAL_FIRST_MS again.
+  s.start(800000);
+  CHECK(!s.due(800000 + CAL_FIRST_MS - 1, 40.0f));
+  CHECK(s.due(800000 + CAL_FIRST_MS, 40.0f));
+  // Across millis() wrap.
+  s.start(0xFFFFF000u);
+  CHECK(!s.due(0xFFFFF000u + 1000u, 30.0f));
+  CHECK(s.due(0xFFFFF000u + CAL_FIRST_MS, 30.0f));
+  s.done(0xFFFFFF00u, 30.0f);
+  CHECK(!s.due(0xFFFFFF00u + CAL_MIN_GAP_MS, 30.1f));
+  CHECK(s.due(0xFFFFFF00u + CAL_MIN_GAP_MS, 30.3f));
+  CHECK(s.due(0xFFFFFF00u + CAL_MAX_GAP_MS, 30.0f));
+}
+
 // ---------------------------------------------------------------- YUYV
 
 static void test_yuyv() {
@@ -519,6 +559,7 @@ int main() {
   test_assembler();
   test_temperatures();
   test_environment();
+  test_calibration_schedule();
   test_yuyv();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

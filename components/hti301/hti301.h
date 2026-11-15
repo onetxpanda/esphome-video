@@ -66,6 +66,9 @@ class HTI301 : public usb_host::USBClient,
   void set_palette_index(uint8_t index) override { this->set_palette(index); }
   // Triggers the shutter calibration; ignored while the camera is not streaming.
   void calibrate();
+  // Sends the shutter calibration by itself (see CalibrationSchedule): the
+  // camera never does one on its own.
+  void set_auto_calibrate(bool v) { this->auto_calibrate_ = v; }
   // Powers the USB host port off and on again: everything on it re-enumerates,
   // as if unplugged and plugged back in.
   void restart_usb();
@@ -234,6 +237,12 @@ class HTI301 : public usb_host::USBClient,
   };
   std::mutex calibration_mutex_;
   CalibrationSample calibration_;
+
+  // Automatic shutter calibration: the schedule (main loop) and the detector's
+  // temperature from the newest radiometric frame (processing task writes).
+  bool auto_calibrate_{true};
+  CalibrationSchedule calibration_schedule_;
+  std::atomic<float> detector_temp_{NAN};
 
   // Statistics (any thread writes, main loop reads and resets).
   // Lost packets: those the controller never ran (skipped_), how many of them opened a transfer

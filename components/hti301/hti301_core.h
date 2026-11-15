@@ -14,6 +14,7 @@
 // image rows hold 14-bit raw values; in processed mode they hold YUYV 4:2:2
 // (full range). The 4 extra rows hold metadata in radiometric mode.
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -240,6 +241,42 @@ bool raw_to_temperatures(const uint16_t *raw, uint16_t width, uint16_t height, c
 
 // Full-range YUYV 4:2:2 (Y0 U Y1 V) to RGB565, low byte first. `width` must be even.
 void yuyv_to_rgb565(const uint8_t *src, uint16_t width, uint16_t height, uint8_t *dst, size_t dst_stride);
+
+// ---------------------------------------------------------------- calibration schedule
+
+// When to send the shutter calibration. The camera never does one on its own,
+// and its readings drift by about 4 degrees per degree its detector warms; a
+// calibration resets them. One is due CAL_FIRST_MS after the stream starts,
+// then whenever the detector has moved CAL_DRIFT_C since the last one (at most
+// one per CAL_MIN_GAP_MS), and at the latest CAL_MAX_GAP_MS after the last one.
+static constexpr uint32_t CAL_FIRST_MS = 30000;
+static constexpr uint32_t CAL_MIN_GAP_MS = 30000;
+static constexpr uint32_t CAL_MAX_GAP_MS = 600000;
+static constexpr float CAL_DRIFT_C = 0.25f;
+
+class CalibrationSchedule {
+ public:
+  // The stream (re)started at `now`.
+  void start(uint32_t now) {
+    this->started_ = now;
+    this->done_ = false;
+  }
+  // A calibration was sent at `now`, the detector at `detector` (NaN: unknown).
+  void done(uint32_t now, float detector) {
+    this->last_ = now;
+    this->detector_ = detector;
+    this->done_ = true;
+  }
+  // Whether one is due at `now`, the detector at `detector` (NaN: unknown, as
+  // in processed mode, where only the time limits apply). Correct across
+  // millis() wrap.
+  bool due(uint32_t now, float detector) const;
+
+ protected:
+  uint32_t started_{0}, last_{0};
+  float detector_{NAN};
+  bool done_{false};
+};
 
 }  // namespace hti301
 }  // namespace esphome

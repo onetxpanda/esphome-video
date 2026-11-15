@@ -386,5 +386,24 @@ void yuyv_to_rgb565(const uint8_t *src, uint16_t width, uint16_t height, uint8_t
   }
 }
 
+// ---------------------------------------------------------------- calibration schedule
+
+bool CalibrationSchedule::due(uint32_t now, float detector) const {
+  if (!this->done_)
+    return now - this->started_ >= CAL_FIRST_MS;
+  const uint32_t since = now - this->last_;
+  if (since < CAL_MIN_GAP_MS)
+    return false;
+  if (since >= CAL_MAX_GAP_MS)
+    return true;
+  if (!std::isfinite(detector))
+    return false;
+  // The last one was sent with the detector unknown (processed mode): take
+  // one now, so later drift is measured from a known temperature.
+  if (!std::isfinite(this->detector_))
+    return true;
+  return std::fabs(detector - this->detector_) >= CAL_DRIFT_C;
+}
+
 }  // namespace hti301
 }  // namespace esphome
