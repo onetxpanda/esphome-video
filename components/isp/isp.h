@@ -83,9 +83,11 @@ class Isp : public Component,
 
 #ifdef USE_ISP_PPA
   ppa_client_handle_t ppa_{nullptr};
-  uint8_t *ppa_in_{nullptr};  // input-resolution colour image
+  uint8_t *ppa_in_{nullptr};  // the index image, for the PPA to read
   size_t ppa_in_cap_{0};
-  bool ppa_error_logged_{false};
+  uint8_t *ppa_out_{nullptr};  // the scaled index image
+  size_t ppa_out_cap_{0};
+  bool ppa_failed_{false};  // the PPA rejected an operation: scale on the CPU from then on
   bool memory_error_logged_{false};
 #endif
 

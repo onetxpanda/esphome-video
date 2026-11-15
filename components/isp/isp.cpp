@@ -212,37 +212,53 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   this->sink_us_ += t3 - t2;
 }
 
+// The PPA scales the index image (GRAY8; chip revision 3 or later), so it
+// blends values, as the CPU path does: blending two palette colours instead
+// gives colours between them that are not on the palette. The palette is then
+// looked up on the CPU (ESP-IDF 5.5 has no driver for the PPA's colour
+// look-up table). The PPA scales bilinearly only; nearest is left to the CPU,
+// which only copies.
 bool Isp::render_ppa_(const Options &o, video::ImageFrame &out) {
 #ifdef USE_ISP_PPA
-  if (this->ppa_ == nullptr)
+  if (this->ppa_ == nullptr || this->ppa_failed_ || o.upscale != Upscale::BILINEAR)
     return false;
-  ppa_srm_color_mode_t cm;
-  if (o.format == video::ImageFormat::RGB565_LE) {
-    cm = PPA_SRM_COLOR_MODE_RGB565;
-  } else if (o.format == video::ImageFormat::RGB888) {
-    cm = PPA_SRM_COLOR_MODE_RGB888;  // byte order is kept; scaling is per channel
-  } else {
-    if (!this->ppa_error_logged_) {
-      ESP_LOGW(TAG, "The PPA cannot output %s; scaling on the CPU", format_name(o.format));
-      this->ppa_error_logged_ = true;
-    }
-    return false;
-  }
   const uint16_t w = this->cpu_.width(), h = this->cpu_.height();
-  const size_t bpp = video::bytes_per_pixel(o.format);
-  const size_t need = static_cast<size_t>(w) * h * bpp;
-  if (this->ppa_in_cap_ < need) {
+  const size_t align = video::dma_alignment();
+  const size_t in_bytes = static_cast<size_t>(w) * h;
+  if (this->ppa_in_cap_ < in_bytes) {
     heap_caps_free(this->ppa_in_);
     this->ppa_in_ = static_cast<uint8_t *>(
-        heap_caps_aligned_calloc(video::dma_alignment(), 1, need, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+        heap_caps_aligned_calloc(align, 1, in_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     if (this->ppa_in_ == nullptr)  // large frames: PSRAM (the PPA driver writes the cache back)
       this->ppa_in_ = static_cast<uint8_t *>(
-          heap_caps_aligned_calloc(video::dma_alignment(), 1, need, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
-    this->ppa_in_cap_ = this->ppa_in_ ? need : 0;
+          heap_caps_aligned_calloc(align, 1, in_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
+    this->ppa_in_cap_ = this->ppa_in_ ? in_bytes : 0;
     if (this->ppa_in_ == nullptr)
       return false;
   }
-  this->cpu_.colorize(o, this->ppa_in_, w * bpp);
+  // A GRAY8 frame is the scaled index image itself; other formats take it
+  // from a buffer of its own. The PPA needs the output buffer and its size
+  // aligned to the cache line.
+  const bool into_frame = o.format == video::ImageFormat::GRAY8 && out.stride == out.width;
+  uint8_t *scaled = out.buffer.data();
+  size_t scaled_size = this->pool_->buffer_size();
+  if (!into_frame) {
+    const size_t need = (static_cast<size_t>(out.width) * out.height + align - 1) / align * align;
+    if (this->ppa_out_cap_ < need) {
+      heap_caps_free(this->ppa_out_);
+      this->ppa_out_ =
+          static_cast<uint8_t *>(heap_caps_aligned_calloc(align, 1, need, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
+      if (this->ppa_out_ == nullptr)
+        this->ppa_out_ =
+            static_cast<uint8_t *>(heap_caps_aligned_calloc(align, 1, need, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+      this->ppa_out_cap_ = this->ppa_out_ ? need : 0;
+      if (this->ppa_out_ == nullptr)
+        return false;
+    }
+    scaled = this->ppa_out_;
+    scaled_size = this->ppa_out_cap_;
+  }
+  std::memcpy(this->ppa_in_, this->cpu_.indices(), in_bytes);
 
   ppa_srm_oper_config_t c{};
   c.in.buffer = this->ppa_in_;
@@ -250,24 +266,25 @@ bool Isp::render_ppa_(const Options &o, video::ImageFrame &out) {
   c.in.pic_h = h;
   c.in.block_w = w;
   c.in.block_h = h;
-  c.in.srm_cm = cm;
-  c.out.buffer = out.buffer.data();
-  c.out.buffer_size = this->pool_->buffer_size();
+  c.in.srm_cm = PPA_SRM_COLOR_MODE_GRAY8;
+  c.out.buffer = scaled;
+  c.out.buffer_size = scaled_size;
   c.out.pic_w = out.width;
   c.out.pic_h = out.height;
-  c.out.srm_cm = cm;
+  c.out.srm_cm = PPA_SRM_COLOR_MODE_GRAY8;
   c.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
   c.scale_x = o.scale;
   c.scale_y = o.scale;
   c.mode = PPA_TRANS_MODE_BLOCKING;
   const esp_err_t err = ppa_do_scale_rotate_mirror(this->ppa_, &c);
   if (err != ESP_OK) {
-    if (!this->ppa_error_logged_) {
-      ESP_LOGW(TAG, "PPA scaling failed (%s); scaling on the CPU", esp_err_to_name(err));
-      this->ppa_error_logged_ = true;
-    }
+    // An older chip revision cannot scale GRAY8; nothing changes that while running.
+    this->ppa_failed_ = true;
+    ESP_LOGW(TAG, "PPA scaling failed (%s); scaling on the CPU from now on", esp_err_to_name(err));
     return false;
   }
+  if (!into_frame)
+    this->cpu_.lookup(scaled, out.width, out.height, o.format, out.buffer.data(), out.stride);
   return true;
 #else
   (void) o;

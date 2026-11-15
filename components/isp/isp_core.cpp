@@ -152,12 +152,63 @@ inline void CpuIsp::write_px_(uint8_t *p, uint8_t idx, ImageFormat f) const {
   }
 }
 
-void CpuIsp::colorize(const Options &o, uint8_t *dst, uint32_t stride) const {
-  const size_t bpp = video::bytes_per_pixel(o.format);
-  for (int y = 0; y < this->h_; y++)
-    for (int x = 0; x < this->w_; x++)
-      this->write_px_(dst + y * stride + x * bpp, this->idx_[y * this->w_ + x], o.format);
+// Built for speed, like map_direct(): it runs once per output pixel.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
+void CpuIsp::lookup(const uint8_t *idx, uint16_t w, uint16_t h, ImageFormat format, uint8_t *dst,
+                    uint32_t stride) const {
+  if (idx == nullptr || dst == nullptr)
+    return;
+  switch (format) {
+    case ImageFormat::RGB565_LE:
+      this->lookup_<ImageFormat::RGB565_LE>(idx, w, h, dst, stride);
+      break;
+    case ImageFormat::RGB565_BE:
+      this->lookup_<ImageFormat::RGB565_BE>(idx, w, h, dst, stride);
+      break;
+    case ImageFormat::RGB888:
+      this->lookup_<ImageFormat::RGB888>(idx, w, h, dst, stride);
+      break;
+    case ImageFormat::GRAY8:
+      this->lookup_<ImageFormat::GRAY8>(idx, w, h, dst, stride);
+      break;
+  }
 }
+
+template<ImageFormat F>
+void CpuIsp::lookup_(const uint8_t *idx, uint16_t w, uint16_t h, uint8_t *dst, uint32_t stride) const {
+  const uint16_t *pal = this->pal565_le_.data();
+  const Rgb *rgb = this->palette_.data();
+  for (int y = 0; y < h; y++) {
+    const uint8_t *src = idx + static_cast<size_t>(y) * w;
+    uint8_t *p = dst + static_cast<size_t>(y) * stride;
+#pragma GCC unroll 4
+    for (int x = 0; x < w; x++) {
+      const uint8_t i = src[x];
+      if constexpr (F == ImageFormat::RGB565_LE) {
+        const uint16_t c = pal[i];
+        p[2 * x] = static_cast<uint8_t>(c & 0xFF);
+        p[2 * x + 1] = static_cast<uint8_t>(c >> 8);
+      } else if constexpr (F == ImageFormat::RGB565_BE) {
+        const uint16_t c = pal[i];
+        p[2 * x] = static_cast<uint8_t>(c >> 8);
+        p[2 * x + 1] = static_cast<uint8_t>(c & 0xFF);
+      } else if constexpr (F == ImageFormat::RGB888) {
+        const Rgb &c = rgb[i];
+        p[3 * x] = c.r;
+        p[3 * x + 1] = c.g;
+        p[3 * x + 2] = c.b;
+      } else {
+        p[x] = i;
+      }
+    }
+  }
+}
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 void CpuIsp::render(const Options &o, uint8_t *dst, uint32_t stride) const {
   const int s = std::min(std::max<int>(o.scale, 1), 20);

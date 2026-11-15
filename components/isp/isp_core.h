@@ -56,8 +56,11 @@ class CpuIsp {
   // row), scaled by o.scale, in o.format.
   void render(const Options &o, uint8_t *dst, uint32_t stride) const;
 
-  // Small colour image at input resolution (for a hardware scaler).
-  void colorize(const Options &o, uint8_t *dst, uint32_t stride) const;
+  // Colours an index image (w x h, w bytes per row), such as a hardware
+  // scaler's output from indices(), into `dst` (stride bytes per row) in
+  // `format`.
+  void lookup(const uint8_t *idx, uint16_t w, uint16_t h, video::ImageFormat format, uint8_t *dst,
+              uint32_t stride) const;
 
   // Unscaled output in one pass: tone-maps `in` (mirroring applied) straight
   // to `dst` in o.format, as tone_map() then render() would at scale 1,
@@ -71,6 +74,8 @@ class CpuIsp {
  protected:
   void write_px_(uint8_t *p, uint8_t idx, video::ImageFormat f) const;
   template<video::ImageFormat F> void bilinear_(int s, uint8_t *dst, uint32_t stride) const;
+  template<video::ImageFormat F>
+  void lookup_(const uint8_t *idx, uint16_t w, uint16_t h, uint8_t *dst, uint32_t stride) const;
   template<video::ImageFormat F>
   void map_direct_(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, uint8_t *dst,
                    uint32_t stride) const;

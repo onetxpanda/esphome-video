@@ -332,6 +332,43 @@ static void test_map_direct() {
   }
 }
 
+// Looking the palette up in a scaled index image (what the PPA path does)
+// gives exactly the CPU's bilinear output in that format: every format,
+// mirroring, a padded stride (padding left alone).
+static void test_lookup() {
+  const int w = 32, h = 24, n = w * h, s = 5, ow = w * s, oh = h * s;
+  std::vector<float> t(n);
+  uint32_t seed = 4242;
+  for (int i = 0; i < n; i++) {
+    seed = seed * 1103515245u + 12345u;
+    t[i] = 10.0f + static_cast<float>((seed >> 8) % 3000) / 100.0f;  // 10..40 C
+  }
+  isp::CpuIsp c;
+  c.set_palette(isp::make_palette(isp::Palette::IRONBOW));
+  isp::Options o;
+  o.range_min = 15.0f;
+  o.range_max = 40.0f;
+  o.scale = s;
+  o.upscale = isp::Upscale::BILINEAR;
+  const video::ImageFormat formats[] = {video::ImageFormat::RGB565_LE, video::ImageFormat::RGB565_BE,
+                                        video::ImageFormat::RGB888, video::ImageFormat::GRAY8};
+  for (int m = 0; m < 2; m++) {
+    o.mirror_x = m == 1;
+    o.format = video::ImageFormat::GRAY8;
+    CHECK(c.tone_map(t.data(), w, h, o));
+    std::vector<uint8_t> scaled(ow * oh);
+    c.render(o, scaled.data(), ow);
+    for (const auto f : formats) {
+      o.format = f;
+      const uint32_t stride = ow * video::bytes_per_pixel(f) + 3;
+      std::vector<uint8_t> a(stride * oh, 0xA5), b(stride * oh, 0xA5);
+      c.render(o, a.data(), stride);
+      c.lookup(scaled.data(), ow, oh, f, b.data(), stride);
+      CHECK(a == b);
+    }
+  }
+}
+
 // The palette index for every value, against its definition: (t - lo) * k
 // rounded half up, 0 at or below the range and for NaN, 255 at or above it.
 static void test_index_rule() {
@@ -434,6 +471,7 @@ static void test_adopt() {
 int main() {
   test_palettes();
   test_map_direct();
+  test_lookup();
   test_index_rule();
   test_adopt();
   test_analyze_matches_process();

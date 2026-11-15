@@ -399,8 +399,14 @@ so each value is tone-mapped and coloured straight into the output frame in
 one pass. The CPU path has two modes. Nearest
 builds each output row once and copies it. Bilinear blends the two source
 rows once per output row, then interpolates along the row, in fixed point.
-The PPA path colours the small image and has the PPA scale it. The PPA's
-interpolation method is fixed by the hardware and cannot be selected.
+The PPA path has the PPA scale the index image (8-bit grey, chip revision 3
+or later) bilinearly, then looks the palette up on the CPU, one table read
+per output pixel. Scaling the coloured image instead would blend colours,
+which leaves colours between pixels that are not on the palette. ESP-IDF 5.5
+has no driver for the PPA's own colour look-up table. The PPA scales only
+bilinearly, so with `upscale: nearest` the CPU scales, which only copies. If
+the PPA rejects the operation (an older chip revision), the ISP scales on
+the CPU from then on.
 Annotations are moved through the same mirroring and scaling as the pixels.
 
 `overlay` draws only its own pixels: a reticle and a label per annotation,
