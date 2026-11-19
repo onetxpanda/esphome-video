@@ -1,5 +1,6 @@
 #include "isp.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "esphome/core/hal.h"
@@ -62,11 +63,14 @@ void Isp::dump_config() {
                 "ISP:\n"
                 "  Scale: %ux, format: %s, palette: %s\n"
                 "  Range: %.1f .. %.1f\n"
-                "  Mirror: x %s, y %s; upscale: %s; scaler: %s",
+                "  Mirror: x %s, y %s; upscale: %s; scaler: %s\n"
+                "  Equalization: %.0f%%, detail: %.2f",
                 this->opt_.scale, format_name(this->opt_.format), video::PALETTE_NAMES[this->palette_.load()],
                 this->opt_.range_min, this->opt_.range_max, YESNO(this->opt_.mirror_x), YESNO(this->opt_.mirror_y),
-                this->opt_.upscale == Upscale::BILINEAR ? "bilinear" : "nearest",
-                this->scaler_ == Scaler::PPA ? "PPA" : "CPU");
+                this->opt_.upscale == Upscale::BICUBIC    ? "bicubic"
+                : this->opt_.upscale == Upscale::BILINEAR ? "bilinear"
+                                                          : "nearest",
+                this->scaler_ == Scaler::PPA ? "PPA" : "CPU", this->opt_.equalize * 100.0f, this->opt_.detail);
 #ifndef USE_ISP_PPA
   if (this->scaler_ == Scaler::PPA)
     ESP_LOGW(TAG, "  The PPA exists only on the ESP32-P4; scaling on the CPU");
@@ -96,6 +100,14 @@ void Isp::set_upscale(Upscale u) {
 void Isp::set_scaler(Scaler s) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->scaler_ = s;
+}
+void Isp::set_equalize(float percent) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  this->opt_.equalize = std::min(std::max(percent, 0.0f), 100.0f) / 100.0f;
+}
+void Isp::set_detail(float gain) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  this->opt_.detail = std::max(gain, 0.0f);
 }
 
 void Isp::on_radiometric_frame(const video::RadiometricFrame &frame) {
@@ -140,9 +152,9 @@ void Isp::task_loop_() {
 
 void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler) {
   const int s = o.scale < 1 ? 1 : o.scale;
-  // Unscaled output is tone-mapped straight into the output frame, below;
-  // scaled output goes through the index image.
-  const bool direct = s == 1;
+  // Unscaled linear output is tone-mapped straight into the output frame,
+  // below; everything else goes through the index image.
+  const bool direct = s == 1 && linear_tone(o);
   uint32_t tone_us = 0;
   if (!direct) {
     const uint32_t t0 = micros();

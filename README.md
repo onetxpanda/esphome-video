@@ -9,7 +9,7 @@ encoders; there is no software encoding.
 |---|---|
 | `mlx90640` | MLX90640 32x24 thermal sensor. Radiometric source (temperatures). |
 | `hti301` | HTI-301 USB thermal camera, 384x288 at 25 fps. Radiometric source in radiometric mode; image source (the camera's own processed image) in processed mode. |
-| `radiometric` | Temperature processing: invalid-pixel repair, outlier filter, temporal average, median filter, statistics sensors. |
+| `radiometric` | Temperature processing: invalid-pixel repair, outlier filter, motion-adaptive temporal filter, edge-preserving smoothing, median filter, statistics sensors. |
 | `isp` | Radiometric frames to images: tone mapping onto a palette, mirroring, upscaling (CPU or the P4's PPA), output format. |
 | `overlay` | Draws a frame's annotations (e.g. min/max/centre markers with values) into the image. |
 | `h264_encoder` | ESP32-P4 hardware H.264 encoder, with a `select` platform to switch between sources. |
@@ -221,7 +221,8 @@ isp:
   `mode`, `range`, `palette`, `emissivity`, a `calibrate` button
   (shutter calibration), and a `restart_usb` button (powers the USB port off
   and on, so everything on it re-enumerates).
-- **radiometric**: `temporal_frames` (1–8; 1 = off), `median_filter`,
+- **radiometric**: `temporal_frames` (1–16; 1 = off), `motion_threshold`
+  (degrees; default 0.5), `edge_smoothing` (degrees; 0 = off), `median_filter`,
   `outlier_level` (degrees; 0 = off), `valid_min` and `valid_max` (readings
   outside are repaired; default −40..300 °C), `update_interval` for the
   sensors. The filters are meant for the MLX90640's noisy low-resolution
@@ -229,12 +230,15 @@ isp:
   `outlier_level: 0` and leave the others off. The median statistic is
   computed only when its sensor is configured.
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
-  `temporal_frames`, `median_filter`, `outlier_level`.
+  `temporal_frames`, `motion_threshold`, `edge_smoothing`, `median_filter`,
+  `outlier_level`.
 - **isp**: `scale` (1–20), `format` (RGB565_LE, RGB565_BE, RGB888, GRAY8),
   `palette` (white_hot, black_hot, ironbow, lava, rainbow, iron_gray,
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
-  `upscale` (nearest, bilinear), `scaler` (cpu, ppa). Controls: `range_min`,
-  `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`.
+  `upscale` (nearest, bilinear, bicubic), `scaler` (cpu, ppa), `equalize`
+  (percent; 0 = linear), `detail` (gain; 0 = off). Controls: `range_min`,
+  `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`,
+  `detail`.
 - **overlay**: `marks` (min, max, center), `hold` (how often a mark's
   position and value are refreshed; default 1 s), `unit` (C, F),
   `enabled`. Controls: `enabled`, `unit`.
@@ -284,7 +288,7 @@ fixed pools and are reference counted (`FrameRef`). A consumer that needs a
 frame after its call returns keeps a reference, and the buffer goes back to
 its pool when the last reference is dropped. If a source finds every buffer
 still in use, it drops that frame rather than wait. Stages' whole-frame working
-memory (the temporal history, filter scratch, palette indices) is allocated
+memory (the temporal filter's state, filter scratch, palette indices) is allocated
 in PSRAM on the device. If it cannot be allocated, the stage logs an error
 and drops frames instead of stopping the device.
 
@@ -331,8 +335,27 @@ while something downstream wants frames, or while `temporal_frames` is above 1.
 `radiometric` repairs invalid pixels (non-finite, or outside `valid_min`..`valid_max`)
 from their valid neighbours. Then come the outlier filter (a pixel differing
 from both row neighbours by at least `outlier_level` becomes their average),
-the running average and the 3x3 median. Statistics are computed last, in
+the temporal filter, edge-preserving smoothing and the 3x3 median. Statistics are computed last, in
 sensor coordinates. The min, max and centre become annotations on the frame.
+
+The temporal filter keeps one filtered frame. Each new reading moves a
+pixel's value towards it by 1/`temporal_frames` while the pixel's 3x3
+neighbourhood changed, on average, by no more than `motion_threshold` since
+the last frame; that is noise, and still areas end up averaged over about
+`temporal_frames` frames. As the change grows to twice the threshold, the
+step grows to the whole difference, so anything that moves or warms up
+shows at once instead of smearing across frames. Looking at the
+neighbourhood rather than the pixel alone keeps a single noisy reading from
+passing as movement. The MLX90640 in chess mode refreshes half the pixels per
+frame, which halves the neighbourhood change of real movement; lower
+`motion_threshold` if moving edges still trail.
+
+Edge-preserving smoothing is a 5x5 bilateral filter: each pixel becomes a
+weighted average of its neighbours, weighted by distance (a Gaussian of
+1 pixel) and by temperature difference (a Gaussian of `edge_smoothing`
+degrees, nothing beyond three times that). Neighbours at about the same
+temperature are averaged, which removes noise, while those across an edge
+count for nothing, so edges stay as sharp as they were.
 With no filter active and every pixel valid, the frame is passed on as it
 is and only the statistics are computed, in one read-only pass. If the
 source supplied statistics and no median is wanted, they are used and the
@@ -394,11 +417,30 @@ invalid.
 
 `isp` tone-maps once, at sensor resolution: each value becomes an index
 into the 256-entry palette, and mirroring is applied at the same time.
+By default the map is linear over `range_min`..`range_max`. With `equalize`
+above 0 it bends towards histogram equalization: a histogram of the frame's
+in-range values over 64 bins, each bin capped at three times the average
+(a plateau, so a large uniform background cannot take most of the colours
+and show its noise), summed into a curve that gives each band of
+temperatures colours in proportion to how much of the scene it covers.
+`equalize` is the percentage of that curve mixed into the linear one. Each
+frame's curve is blended into the previous one (a quarter per frame), so
+the colours do not flicker with noise. With `detail` above 0, the frame is
+also smoothed with a 3x3 kernel, and each pixel's difference from the
+smoothed frame is multiplied by 1 + `detail` after mapping. Flat areas are
+unchanged; edges and small features gain contrast, with a slight bright and
+dark rim on either side of an edge.
 Scaling then works on these indices. At scale 1 there is nothing to scale,
 so each value is tone-mapped and coloured straight into the output frame in
-one pass. The CPU path has two modes. Nearest
+one pass (unless `equalize` or `detail` is on). The CPU path has three modes. Nearest
 builds each output row once and copies it. Bilinear blends the two source
 rows once per output row, then interpolates along the row, in fixed point.
+Bicubic (Catmull-Rom) does the same with four rows and four columns; its
+taps and weights depend only on an output pixel's position within its
+input pixel, so they are worked out once per position. It gives smoother
+curves than bilinear, without bilinear's diamond-shaped artefacts at large
+scales, and overshoots slightly at edges, which reads as sharpening. The PPA
+scales only bilinearly, so bicubic always scales on the CPU.
 The PPA path has the PPA scale the index image (8-bit grey, chip revision 3
 or later) bilinearly, then looks the palette up on the CPU, one table read
 per output pixel. Scaling the coloured image instead would blend colours,

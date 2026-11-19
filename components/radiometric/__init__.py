@@ -1,6 +1,7 @@
 """Temperature-domain processing of a radiometric source: invalid-pixel
-repair, outlier filter, temporal average, median filter, and statistics with
-their sensors. Output is a radiometric source again (e.g. for `isp`)."""
+repair, outlier filter, motion-adaptive temporal filter, edge-preserving
+smoothing, median filter, and statistics with their sensors. Output is a
+radiometric source again (e.g. for `isp`)."""
 
 import esphome.codegen as cg
 from esphome.components import sensor
@@ -30,6 +31,8 @@ MULTI_CONF = True  # e.g. one chain per camera
 AUTO_LOAD = ["video_core", "video_controls", "sensor"]
 
 CONF_TEMPORAL_FRAMES = "temporal_frames"
+CONF_MOTION_THRESHOLD = "motion_threshold"
+CONF_EDGE_SMOOTHING = "edge_smoothing"
 CONF_MEDIAN_FILTER = "median_filter"
 CONF_OUTLIER_LEVEL = "outlier_level"
 CONF_CONTROLS = "controls"
@@ -67,8 +70,14 @@ CONFIG_SCHEMA = cv.All(inherit_device_id("controls.*", *SENSORS), cv.Schema(
         cv.GenerateID(): cv.declare_id(Radiometric),
         **DEVICE_ID_SCHEMA,
         cv.Required(CONF_SOURCE): cv.use_id(RadiometricSource),
-        # Running average over this many frames; 1 = off. Adds lag.
-        cv.Optional(CONF_TEMPORAL_FRAMES, default=1): cv.int_range(min=1, max=8),
+        # Temporal filter: still pixels are averaged over about this many
+        # frames; 1 = off. Pixels whose neighbourhood changes by more than
+        # motion_threshold (degrees) are treated as moving and follow at once.
+        cv.Optional(CONF_TEMPORAL_FRAMES, default=1): cv.int_range(min=1, max=16),
+        cv.Optional(CONF_MOTION_THRESHOLD, default=0.5): cv.float_range(min=0.05, max=10),
+        # Edge-preserving (bilateral) smoothing: neighbours within about this
+        # many degrees are averaged, edges are kept; 0 = off.
+        cv.Optional(CONF_EDGE_SMOOTHING, default=0.0): cv.float_range(min=0, max=10),
         cv.Optional(CONF_MEDIAN_FILTER, default=False): cv.boolean,
         # A pixel differing from both row neighbours by at least this many
         # degrees becomes their average; 0 = off.
@@ -76,6 +85,8 @@ CONFIG_SCHEMA = cv.All(inherit_device_id("controls.*", *SENSORS), cv.Schema(
         cv.Optional(CONF_CONTROLS, default={}): cv.Schema(
             {
                 cv.Optional(CONF_TEMPORAL_FRAMES): number_control(),
+                cv.Optional(CONF_MOTION_THRESHOLD): number_control(),
+                cv.Optional(CONF_EDGE_SMOOTHING): number_control(),
                 cv.Optional(CONF_MEDIAN_FILTER): switch_control(),
                 cv.Optional(CONF_OUTLIER_LEVEL): number_control(),
             }
@@ -97,6 +108,8 @@ async def to_code(config):
     cg.add(source.add_radiometric_sink(var))
 
     cg.add(var.set_temporal_frames(config[CONF_TEMPORAL_FRAMES]))
+    cg.add(var.set_motion_threshold(config[CONF_MOTION_THRESHOLD]))
+    cg.add(var.set_edge_smoothing(config[CONF_EDGE_SMOOTHING]))
     cg.add(var.set_median_filter(config[CONF_MEDIAN_FILTER]))
     cg.add(var.set_outlier_level(config[CONF_OUTLIER_LEVEL]))
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
@@ -110,7 +123,15 @@ async def to_code(config):
     if CONF_TEMPORAL_FRAMES in controls:
         await new_number_control(
             controls[CONF_TEMPORAL_FRAMES], var, "set_temporal_frames",
-            config[CONF_TEMPORAL_FRAMES], 1, 8, 1,
+            config[CONF_TEMPORAL_FRAMES], 1, 16, 1,
+        )
+    if CONF_MOTION_THRESHOLD in controls:
+        await new_number_control(
+            controls[CONF_MOTION_THRESHOLD], var, "set_motion_threshold", config[CONF_MOTION_THRESHOLD], 0.05, 10, 0.05
+        )
+    if CONF_EDGE_SMOOTHING in controls:
+        await new_number_control(
+            controls[CONF_EDGE_SMOOTHING], var, "set_edge_smoothing", config[CONF_EDGE_SMOOTHING], 0, 10, 0.1
         )
     if CONF_MEDIAN_FILTER in controls:
         await new_switch_control(controls[CONF_MEDIAN_FILTER], var, "set_median_filter", config[CONF_MEDIAN_FILTER])

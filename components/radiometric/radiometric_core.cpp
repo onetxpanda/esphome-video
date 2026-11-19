@@ -7,14 +7,20 @@
 namespace esphome {
 namespace radiometric {
 
-
-
 void Processor::set_options(const Options &o) {
   Options n = o;
   n.temporal_frames = std::min<uint8_t>(std::max<uint8_t>(n.temporal_frames, 1), MAX_TEMPORAL);
-  if (n.temporal_frames != this->opt_.temporal_frames) {
-    this->history_count_ = 0;  // start the average afresh at the new depth
-    this->history_next_ = 0;
+  n.motion_threshold = std::max(n.motion_threshold, 0.01f);
+  n.edge_smoothing = std::max(n.edge_smoothing, 0.0f);
+  if (n.temporal_frames == 1)
+    this->state_valid_ = false;  // turned off: start afresh when turned on again
+  if (n.edge_smoothing > 0.0f && n.edge_smoothing != this->opt_.edge_smoothing) {
+    // Gaussian of the temperature difference, out to 3 sigma (sigma = edge_smoothing).
+    for (int k = 0; k < 64; k++) {
+      const float d = 3.0f * k / 63.0f;
+      this->range_lut_[k] = std::exp(-0.5f * d * d);
+    }
+    this->range_lut_scale_ = 63.0f / (3.0f * n.edge_smoothing);
   }
   this->opt_ = n;
 }
@@ -92,8 +98,8 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   if (width != this->w_ || height != this->h_) {
     this->w_ = width;
     this->h_ = height;
-    this->history_.reset();
-    this->history_count_ = this->history_next_ = 0;
+    this->state_.reset();
+    this->state_valid_ = false;
   }
   if (!this->work_.ensure(n) || !this->tmp_.ensure(n)) {
     this->stats_.valid = false;
@@ -133,25 +139,11 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
         w[i] = (w[i - 1] + w[i + 1]) / 2.0f;
   }
 
-  // 3. Temporal average.
-  const uint8_t depth = this->opt_.temporal_frames;
-  if (depth > 1 && this->history_.size() != n * MAX_TEMPORAL) {
-    this->history_count_ = this->history_next_ = 0;
-    if (!this->history_.ensure(n * MAX_TEMPORAL))
-      this->history_.reset();  // out of memory: no averaging this frame
-  }
-  if (depth > 1 && this->history_.size() == n * MAX_TEMPORAL) {
-    std::memcpy(&this->history_[static_cast<size_t>(this->history_next_) * n], w, n * sizeof(float));
-    this->history_next_ = static_cast<uint8_t>((this->history_next_ + 1) % depth);
-    if (this->history_count_ < depth)
-      this->history_count_++;
-    for (size_t i = 0; i < n; i++) {
-      float sum = 0.0f;
-      for (uint8_t k = 0; k < this->history_count_; k++)
-        sum += this->history_[k * n + i];
-      w[i] = sum / this->history_count_;
-    }
-  }
+  // 3. Temporal filter, then edge-preserving smoothing.
+  if (this->opt_.temporal_frames > 1)
+    this->temporal_(w, n);
+  if (this->opt_.edge_smoothing > 0.0f)
+    this->bilateral_(w);
 
   // 4. 3x3 median, edges replicated.
   if (this->opt_.median_filter) {
@@ -217,6 +209,88 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   if (out != w)
     std::memcpy(out, w, n * sizeof(float));
   return true;
+}
+
+// Recursive filter with motion detection. Each pixel's output moves towards
+// the new reading by a = 1/temporal_frames while its 3x3 neighbourhood
+// changed by no more than motion_threshold on average (noise), and by up to
+// a = 1 as the change reaches twice that (movement), so still areas are
+// averaged over many frames while moving edges are not smeared. The
+// neighbourhood keeps single noisy pixels from passing as movement.
+void Processor::temporal_(float *w, size_t n) {
+  if (!this->state_.ensure(n)) {
+    this->state_valid_ = false;  // out of memory: no filtering this frame
+    return;
+  }
+  float *s = this->state_.data();
+  if (!this->state_valid_) {
+    std::memcpy(s, w, n * sizeof(float));
+    this->state_valid_ = true;
+    return;
+  }
+  const int width = this->w_, height = this->h_;
+  float *d = this->tmp_.data();
+  for (size_t i = 0; i < n; i++)
+    d[i] = std::fabs(w[i] - s[i]);
+  const float a_min = 1.0f / this->opt_.temporal_frames;
+  const float t = this->opt_.motion_threshold, inv_t = 1.0f / t;
+  for (int r = 0; r < height; r++) {
+    const int r0 = std::max(r - 1, 0), r1 = std::min(r + 1, height - 1);
+    for (int c = 0; c < width; c++) {
+      const int c0 = std::max(c - 1, 0), c1 = std::min(c + 1, width - 1);
+      float sum = 0.0f;
+      for (int rr = r0; rr <= r1; rr++)
+        for (int cc = c0; cc <= c1; cc++)
+          sum += d[rr * width + cc];
+      const float change = sum / static_cast<float>((r1 - r0 + 1) * (c1 - c0 + 1));
+      const float m = std::fmin(std::fmax((change - t) * inv_t, 0.0f), 1.0f);
+      const float a = a_min + (1.0f - a_min) * m;
+      const size_t i = static_cast<size_t>(r) * width + c;
+      s[i] += a * (w[i] - s[i]);
+    }
+  }
+  std::memcpy(w, s, n * sizeof(float));
+}
+
+// 5x5 bilateral filter: neighbours are weighted by distance (Gaussian,
+// sigma 1 pixel) and by temperature difference (Gaussian, sigma
+// edge_smoothing, nothing beyond 3 sigma), so noise is averaged away while
+// edges between warmer and cooler areas stay sharp.
+void Processor::bilateral_(float *w) {
+  const int width = this->w_, height = this->h_;
+  const size_t n = static_cast<size_t>(width) * height;
+  std::memcpy(this->tmp_.data(), w, n * sizeof(float));
+  const float *src = this->tmp_.data();
+  static const float SPATIAL[3][3] = {
+      {1.0f, 0.60653066f, 0.13533528f},        // exp(-(dx^2+dy^2)/2) for |dy| = 0
+      {0.60653066f, 0.36787944f, 0.08208500f},  // |dy| = 1
+      {0.13533528f, 0.08208500f, 0.01831564f},  // |dy| = 2
+  };
+  const float k = this->range_lut_scale_;
+  for (int r = 0; r < height; r++) {
+    for (int c = 0; c < width; c++) {
+      const float v = src[r * width + c];
+      float sum = 0.0f, wsum = 0.0f;
+      for (int dr = -2; dr <= 2; dr++) {
+        const int rr = r + dr;
+        if (rr < 0 || rr >= height)
+          continue;
+        for (int dc = -2; dc <= 2; dc++) {
+          const int cc = c + dc;
+          if (cc < 0 || cc >= width)
+            continue;
+          const float u = src[rr * width + cc];
+          const float q = std::fabs(u - v) * k;
+          if (!(q < 64.0f))
+            continue;
+          const float wt = SPATIAL[std::abs(dr)][std::abs(dc)] * this->range_lut_[static_cast<int>(q)];
+          sum += wt * u;
+          wsum += wt;
+        }
+      }
+      w[r * width + c] = sum / wsum;  // wsum >= 1: the centre pixel weighs 1
+    }
+  }
 }
 
 }  // namespace radiometric

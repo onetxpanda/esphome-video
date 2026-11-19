@@ -48,14 +48,16 @@ static void test_radiometric() {
   p.process(spike.data(), out.data(), W, H);
   CHECK(NEAR(out[10 * W + 10], 25.0f, 1e-4f));
 
+  // A change far above the motion threshold everywhere is movement: the
+  // temporal filter passes it through at once instead of averaging.
   o.outlier_level = 0;
-  o.temporal_frames = 2;
+  o.temporal_frames = 4;
   p.set_options(o);
   std::vector<float> a(N, 20.0f), b(N, 30.0f);
   p.process(a.data(), out.data(), W, H);
   CHECK(NEAR(out[100], 20.0f, 1e-4f));
   p.process(b.data(), out.data(), W, H);
-  CHECK(NEAR(out[100], 25.0f, 1e-4f));
+  CHECK(NEAR(out[100], 30.0f, 1e-4f));
   p.process(b.data(), b.data(), W, H);  // in place
   CHECK(NEAR(b[100], 30.0f, 1e-4f));
 
@@ -145,6 +147,230 @@ static void test_isp() {
   CHECK(c.indices()[0] == 255 && c.indices()[1] == 0 && c.indices()[2] == 0);
 }
 
+// Deterministic noise in [-amp, amp].
+static float noise(uint32_t &seed, float amp) {
+  seed = seed * 1664525u + 1013904223u;
+  return amp * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+}
+
+static float stddev(const std::vector<float> &v, size_t from, size_t to) {
+  double m = 0, q = 0;
+  for (size_t i = from; i < to; i++)
+    m += v[i];
+  m /= (to - from);
+  for (size_t i = from; i < to; i++)
+    q += (v[i] - m) * (v[i] - m);
+  return static_cast<float>(std::sqrt(q / (to - from)));
+}
+
+// The motion-adaptive temporal filter: still noise is averaged away, a
+// moving hot spot is followed at once, and frames = 1 passes frames through.
+static void test_temporal_filter() {
+  radiometric::Processor p;
+  radiometric::Options o;
+  o.outlier_level = 0;
+  o.temporal_frames = 8;
+  o.motion_threshold = 0.5f;
+  p.set_options(o);
+  uint32_t seed = 1;
+  std::vector<float> f(N), out(N);
+  // Still scene with +-0.3 noise: the output's spread over time at one
+  // pixel is far below the input's.
+  std::vector<float> in_hist, out_hist;
+  for (int k = 0; k < 60; k++) {
+    for (int i = 0; i < N; i++)
+      f[i] = 25.0f + noise(seed, 0.3f);
+    p.process(f.data(), out.data(), W, H);
+    if (k >= 20) {
+      in_hist.push_back(f[12 * W + 16]);
+      out_hist.push_back(out[12 * W + 16]);
+    }
+  }
+  const float sin = stddev(in_hist, 0, in_hist.size()), sout = stddev(out_hist, 0, out_hist.size());
+  CHECK(sout < 0.5f * sin);
+
+  // A 3x3 hot spot (40 C) appears: it shows at full strength in the same
+  // frame; then it moves, and the old place is cool again at once.
+  for (int i = 0; i < N; i++)
+    f[i] = 25.0f + noise(seed, 0.3f);
+  for (int r = 10; r < 13; r++)
+    for (int c = 10; c < 13; c++)
+      f[r * W + c] = 40.0f;
+  p.process(f.data(), out.data(), W, H);
+  CHECK(out[11 * W + 11] > 39.0f);
+  for (int r = 10; r < 13; r++)
+    for (int c = 10; c < 13; c++)
+      f[r * W + c] = 25.0f;
+  for (int r = 10; r < 13; r++)
+    for (int c = 20; c < 23; c++)
+      f[r * W + c] = 40.0f;
+  p.process(f.data(), out.data(), W, H);
+  CHECK(out[11 * W + 21] > 39.0f);
+  CHECK(out[11 * W + 11] < 26.0f);
+
+  o.temporal_frames = 1;
+  p.set_options(o);
+  for (int i = 0; i < N; i++)
+    f[i] = 25.0f + noise(seed, 0.3f);
+  p.process(f.data(), out.data(), W, H);
+  bool same = true;
+  for (int i = 0; i < N; i++)
+    if (out[i] != f[i])
+      same = false;
+  CHECK(same);
+}
+
+// Edge-preserving smoothing: noise on both sides of a 10 C edge is reduced,
+// and the edge stays where it was, as sharp as it was.
+static void test_edge_smoothing() {
+  radiometric::Processor p;
+  radiometric::Options o;
+  o.outlier_level = 0;
+  o.edge_smoothing = 1.0f;
+  p.set_options(o);
+  CHECK(p.filters_active());
+  uint32_t seed = 7;
+  std::vector<float> f(N), out(N);
+  for (int r = 0; r < H; r++)
+    for (int c = 0; c < W; c++)
+      f[r * W + c] = (c < 16 ? 20.0f : 30.0f) + noise(seed, 0.3f);
+  p.process(f.data(), out.data(), W, H);
+  std::vector<float> fin, fout;
+  for (int r = 2; r < H - 2; r++)
+    for (int c = 2; c < 13; c++) {
+      fin.push_back(f[r * W + c]);
+      fout.push_back(out[r * W + c]);
+    }
+  CHECK(stddev(fout, 0, fout.size()) < 0.6f * stddev(fin, 0, fin.size()));
+  bool edge = true;
+  for (int r = 0; r < H; r++)
+    if (!(out[r * W + 15] < 20.5f && out[r * W + 16] > 29.5f))
+      edge = false;
+  CHECK(edge);
+}
+
+// Equalization and detail: off gives exactly the linear map; equalization
+// is monotonic and spreads a crowded temperature band over more colours;
+// detail leaves flat areas alone and overshoots at an edge.
+static void test_tone_curve() {
+  isp::Options o;
+  o.range_min = 15;
+  o.range_max = 40;
+  o.scale = 1;
+  o.format = video::ImageFormat::GRAY8;
+  uint32_t seed = 3;
+  std::vector<float> t(N);
+  for (int i = 0; i < N; i++)
+    t[i] = i % 10 == 0 ? 35.0f + noise(seed, 0.5f) : 20.0f + noise(seed, 0.5f);  // 90% near 20 C
+
+  isp::CpuIsp lin, eq;
+  lin.set_palette(gray_palette());
+  eq.set_palette(gray_palette());
+  lin.tone_map(t.data(), W, H, o);
+  std::vector<uint8_t> lin_idx(lin.indices(), lin.indices() + N);
+  isp::Options e = o;
+  e.equalize = 0.0f;
+  e.detail = 0.0f;
+  CHECK(isp::linear_tone(e));
+  eq.tone_map(t.data(), W, H, e);
+  CHECK(std::equal(lin_idx.begin(), lin_idx.end(), eq.indices()));
+
+  e.equalize = 1.0f;
+  CHECK(!isp::linear_tone(e));
+  for (int k = 0; k < 20; k++)  // let the smoothed curve settle
+    eq.tone_map(t.data(), W, H, e);
+  const uint8_t *q = eq.indices();
+  // Monotonic: a warmer pixel never gets a lower index.
+  std::vector<int> order(N);
+  for (int i = 0; i < N; i++)
+    order[i] = i;
+  std::sort(order.begin(), order.end(), [&](int a, int b) { return t[a] < t[b]; });
+  bool mono = true;
+  for (int i = 1; i < N; i++)
+    if (q[order[i]] < q[order[i - 1]])
+      mono = false;
+  CHECK(mono);
+  // The 20 C band (index spread over its pixels) gets more colours than linear.
+  int lmin = 255, lmax = 0, qmin = 255, qmax = 0;
+  for (int i = 0; i < N; i++)
+    if (i % 10 != 0) {
+      lmin = std::min<int>(lmin, lin_idx[i]);
+      lmax = std::max<int>(lmax, lin_idx[i]);
+      qmin = std::min<int>(qmin, q[i]);
+      qmax = std::max<int>(qmax, q[i]);
+    }
+  CHECK(qmax - qmin > 2 * (lmax - lmin));
+
+  // Detail: flat stays flat (and linear); a step overshoots on both sides.
+  std::vector<float> st(N);
+  for (int r = 0; r < H; r++)
+    for (int c = 0; c < W; c++)
+      st[r * W + c] = c < 16 ? 20.0f : 30.0f;
+  isp::CpuIsp d;
+  d.set_palette(gray_palette());
+  isp::Options dopt = o;
+  dopt.detail = 1.0f;
+  d.tone_map(st.data(), W, H, dopt);
+  lin.tone_map(st.data(), W, H, o);
+  const int row = 12 * W;
+  CHECK(d.indices()[row + 4] == lin.indices()[row + 4] && d.indices()[row + 28] == lin.indices()[row + 28]);
+  CHECK(d.indices()[row + 16] > lin.indices()[row + 16] && d.indices()[row + 15] < lin.indices()[row + 15]);
+
+  // Mirroring applies on the equalized path too.
+  std::vector<float> hot(N, 20.0f);
+  hot[0] = 39.0f;
+  isp::Options m = o;
+  m.equalize = 0.5f;
+  m.mirror_x = true;
+  isp::CpuIsp mi;
+  mi.set_palette(gray_palette());
+  mi.tone_map(hot.data(), W, H, m);
+  CHECK(*std::max_element(mi.indices(), mi.indices() + N) == mi.indices()[W - 1]);
+  CHECK(mi.indices()[W - 1] > mi.indices()[0] + 50);
+}
+
+// Bicubic: a flat image stays flat; a linear ramp stays linear (matching
+// bilinear inside the image); a single hot pixel peaks at its own place.
+static void test_bicubic() {
+  isp::CpuIsp c;
+  c.set_palette(gray_palette());
+  isp::Options o;
+  o.range_min = 0;
+  o.range_max = 255;
+  o.scale = 20;
+  o.format = video::ImageFormat::GRAY8;
+  const int ow = W * 20, oh = H * 20;
+  std::vector<float> t(N, 100.0f);
+  c.tone_map(t.data(), W, H, o);
+  std::vector<uint8_t> a(ow * oh), b(ow * oh);
+  o.upscale = isp::Upscale::BICUBIC;
+  c.render(o, a.data(), ow);
+  CHECK(std::all_of(a.begin(), a.end(), [](uint8_t v) { return v == 100; }));
+
+  for (int r = 0; r < H; r++)
+    for (int x = 0; x < W; x++)
+      t[r * W + x] = 8.0f * x;
+  c.tone_map(t.data(), W, H, o);
+  c.render(o, a.data(), ow);
+  o.upscale = isp::Upscale::BILINEAR;
+  c.render(o, b.data(), ow);
+  bool close = true;
+  for (int y = 0; y < oh; y++)
+    for (int x = 40; x < ow - 40; x++)
+      if (std::abs(a[y * ow + x] - b[y * ow + x]) > 1)
+        close = false;
+  CHECK(close);
+
+  std::fill(t.begin(), t.end(), 0.0f);
+  t[12 * W + 16] = 255.0f;
+  c.tone_map(t.data(), W, H, o);
+  o.upscale = isp::Upscale::BICUBIC;
+  c.render(o, a.data(), ow);
+  const auto peak = std::max_element(a.begin(), a.end()) - a.begin();
+  CHECK(a[peak] > 220 && peak / ow / 20 == 12 && peak % ow / 20 == 16);
+  CHECK(a[0] == 0 && a[ow * oh - 1] == 0);
+}
+
 // Relative speed of the new CPU renderer against the float renderer it replaces.
 static void bench() {
   isp::CpuIsp c;
@@ -161,13 +387,14 @@ static void bench() {
       fn();
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count() / 20;
   };
-  for (auto up : {isp::Upscale::NEAREST, isp::Upscale::BILINEAR}) {
+  for (auto up : {isp::Upscale::NEAREST, isp::Upscale::BILINEAR, isp::Upscale::BICUBIC}) {
     o.upscale = up;
     const double ms = time([&] {
       c.tone_map(t.data(), W, H, o);
       c.render(o, out.data(), 640 * 2);
     });
-    std::printf("  host: %s 640x480 RGB565 = %.3f ms\n", up == isp::Upscale::NEAREST ? "nearest " : "bilinear", ms);
+    std::printf("  host: %s 640x480 RGB565 = %.3f ms\n",
+                up == isp::Upscale::NEAREST ? "nearest " : (up == isp::Upscale::BILINEAR ? "bilinear" : "bicubic "), ms);
   }
 }
 
@@ -479,6 +706,10 @@ int main() {
   test_radiometric();
   test_sensor_frame_due();
   test_isp();
+  test_temporal_filter();
+  test_edge_smoothing();
+  test_tone_curve();
+  test_bicubic();
   test_large_frames();
   bench();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);

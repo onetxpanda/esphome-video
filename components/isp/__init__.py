@@ -40,12 +40,14 @@ CONF_UPSCALE = "upscale"
 CONF_SCALER = "scaler"
 CONF_CONTROLS = "controls"
 CONF_LOG_TIMING = "log_timing"
+CONF_EQUALIZE = "equalize"
+CONF_DETAIL = "detail"
 
 FORMATS = {"RGB565_LE": "RGB565_LE", "RGB565_BE": "RGB565_BE", "RGB888": "RGB888", "GRAY8": "GRAY8"}
 # Older names, kept working.
 PALETTE_ALIASES = {"iron": "ironbow", "gray": "white_hot", "grey": "white_hot"}
-UPSCALES = ["nearest", "bilinear"]
-UPSCALE_LABELS = ["Nearest", "Bilinear"]
+UPSCALES = ["nearest", "bilinear", "bicubic"]
+UPSCALE_LABELS = ["Nearest", "Bilinear", "Bicubic"]
 SCALERS = ["cpu", "ppa"]
 SCALER_LABELS = ["CPU", "PPA"]
 
@@ -92,6 +94,12 @@ CONFIG_SCHEMA = cv.All(
             # CPU scaling method. The PPA's method is fixed by the hardware.
             cv.Optional(CONF_UPSCALE, default="nearest"): cv.one_of(*UPSCALES, lower=True),
             cv.Optional(CONF_SCALER, default="cpu"): cv.one_of(*SCALERS, lower=True),
+            # Percent of histogram equalization mixed into the linear colour
+            # map: more colours for the temperatures the scene contains.
+            cv.Optional(CONF_EQUALIZE, default=0): cv.float_range(min=0, max=100),
+            # Amplification of local detail against a smoothed copy of the
+            # frame (sharper edges); 0 = off.
+            cv.Optional(CONF_DETAIL, default=0): cv.float_range(min=0, max=4),
             cv.Optional(CONF_CONTROLS, default={}): cv.Schema(
                 {
                     cv.Optional(CONF_RANGE_MIN): number_control(),
@@ -100,6 +108,8 @@ CONFIG_SCHEMA = cv.All(
                     cv.Optional(CONF_MIRROR_Y): switch_control(),
                     cv.Optional(CONF_UPSCALE): select_control(),
                     cv.Optional(CONF_SCALER): select_control(),
+                    cv.Optional(CONF_EQUALIZE): number_control(),
+                    cv.Optional(CONF_DETAIL): number_control(),
                 }
             ),
             cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
@@ -129,6 +139,8 @@ async def to_code(config):
     cg.add(var.set_upscale(Upscale.enum(config[CONF_UPSCALE].upper())))
     cg.add(var.set_scaler(Scaler.enum(config[CONF_SCALER].upper())))
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
+    cg.add(var.set_equalize(config[CONF_EQUALIZE]))
+    cg.add(var.set_detail(config[CONF_DETAIL]))
 
     c = config[CONF_CONTROLS]
     for key in (CONF_RANGE_MIN, CONF_RANGE_MAX):
@@ -142,6 +154,10 @@ async def to_code(config):
             c[CONF_UPSCALE], var, "set_upscale", UPSCALE_LABELS, UPSCALES.index(config[CONF_UPSCALE]),
             convert="static_cast<esphome::isp::Upscale>(v)",
         )
+    if CONF_EQUALIZE in c:
+        await new_number_control(c[CONF_EQUALIZE], var, "set_equalize", config[CONF_EQUALIZE], 0, 100, 5)
+    if CONF_DETAIL in c:
+        await new_number_control(c[CONF_DETAIL], var, "set_detail", config[CONF_DETAIL], 0, 4, 0.1)
     if CONF_SCALER in c:
         await new_select_control(
             c[CONF_SCALER], var, "set_scaler", SCALER_LABELS, SCALERS.index(config[CONF_SCALER]),

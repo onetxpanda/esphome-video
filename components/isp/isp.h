@@ -60,6 +60,9 @@ class Isp : public Component,
   void set_mirror_y(bool v);
   void set_upscale(Upscale u);
   void set_scaler(Scaler s);
+  // Equalization in percent (0 = linear, 100 = fully equalized).
+  void set_equalize(float percent);
+  void set_detail(float gain);
 
  protected:
   static void task_entry_(void *arg);

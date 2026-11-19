@@ -23,10 +23,12 @@ void Radiometric::setup() {
 void Radiometric::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "Radiometric processing:\n"
-                "  Temporal average: %u frames\n"
+                "  Temporal filter: %u frames, motion threshold %.2f\n"
+                "  Edge-preserving smoothing: %.2f\n"
                 "  Median filter: %s\n"
                 "  Outlier level: %.1f",
-                this->options_.temporal_frames, YESNO(this->options_.median_filter), this->options_.outlier_level);
+                this->options_.temporal_frames, this->options_.motion_threshold, this->options_.edge_smoothing,
+                YESNO(this->options_.median_filter), this->options_.outlier_level);
   LOG_UPDATE_INTERVAL(this);
   LOG_SENSOR("  ", "Min", this->min_sensor_);
   LOG_SENSOR("  ", "Max", this->max_sensor_);
@@ -43,6 +45,18 @@ void Radiometric::set_temporal_frames(float n) {
   this->temporal_.store(this->options_.temporal_frames > 1);
 }
 
+void Radiometric::set_motion_threshold(float v) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  this->options_.motion_threshold = v;
+  this->options_changed_ = true;
+}
+
+void Radiometric::set_edge_smoothing(float v) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  this->options_.edge_smoothing = v;
+  this->options_changed_ = true;
+}
+
 void Radiometric::set_median_filter(bool v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->options_.median_filter = v;
@@ -57,7 +71,7 @@ void Radiometric::set_outlier_level(float v) {
 
 // Consumers downstream (an ISP feeding a viewer or a snapshot) get every frame.
 // With none, the sensors alone take one frame per update (at most 1 s apart),
-// and the source skips converting the frames in between. A temporal average
+// and the source skips converting the frames in between. The temporal filter
 // needs consecutive frames, so it keeps every frame.
 bool Radiometric::wants_frames() const {
   if (this->sinks_.any_wants())

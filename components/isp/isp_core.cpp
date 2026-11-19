@@ -41,23 +41,125 @@ static inline float index_scale(const Options &o) { return 255.0f / std::max(o.r
 // pointers, which may alias anything, so a member or reference would be
 // reloaded for every pixel.
 bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Options &o) {
-  if (!this->idx_.ensure(static_cast<size_t>(in_w) * in_h)) {
+  const size_t n = static_cast<size_t>(in_w) * in_h;
+  if (!this->idx_.ensure(n)) {
     this->w_ = this->h_ = 0;
     return false;
   }
   this->w_ = in_w;
   this->h_ = in_h;
-  const float lo = o.range_min, k = index_scale(o);
   const int step = o.mirror_x ? -1 : 1;
   const bool my = o.mirror_y;
   uint8_t *idx = this->idx_.data();
+  if (linear_tone(o)) {
+    this->curve_valid_ = false;  // equalization starts afresh when turned on
+    const float lo = o.range_min, k = index_scale(o);
+    for (int y = 0; y < in_h; y++) {
+      const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
+      uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
+      for (int x = 0; x < in_w; x++, src += step)
+        dst[x] = to_index(*src, lo, k);
+    }
+    return true;
+  }
+
+  this->update_curve_(in, n, o);
+  // The curve at value t: piecewise linear between its points; NaN maps to 0.
+  const float lo = o.range_min;
+  const float kb = static_cast<float>(CURVE_BINS) / std::max(o.range_max - o.range_min, 1e-3f);
+  const float *curve = this->curve_.data();
+  auto f = [lo, kb, curve](float t) {
+    const float pos = std::fmin(std::fmax((t - lo) * kb, 0.0f), static_cast<float>(CURVE_BINS));
+    const int i = std::min(static_cast<int>(pos), CURVE_BINS - 1);
+    return curve[i] + (pos - i) * (curve[i + 1] - curve[i]);
+  };
+
+  // Detail: the frame smoothed with a 3x3 [1 2 1] kernel (edges replicated)
+  // is the base; each pixel's difference from it is amplified by 1 + detail.
+  const float gain = o.detail > 0.0f ? 1.0f + o.detail : 1.0f;
+  const float *base = nullptr;
+  if (o.detail > 0.0f && this->base_.ensure(n)) {
+    float *b = this->base_.data();
+    for (int y = 0; y < in_h; y++) {
+      const int y0 = std::max(y - 1, 0), y1 = std::min(y + 1, in_h - 1);
+      for (int x = 0; x < in_w; x++) {
+        const int x0 = std::max(x - 1, 0), x1 = std::min(x + 1, in_w - 1);
+        auto at = [in, in_w](int yy, int xx) { return in[static_cast<size_t>(yy) * in_w + xx]; };
+        b[static_cast<size_t>(y) * in_w + x] =
+            (at(y0, x0) + 2 * at(y0, x) + at(y0, x1) + 2 * at(y, x0) + 4 * at(y, x) + 2 * at(y, x1) + at(y1, x0) +
+             2 * at(y1, x) + at(y1, x1)) *
+            (1.0f / 16.0f);
+      }
+    }
+    base = b;
+  }
+
   for (int y = 0; y < in_h; y++) {
-    const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
+    const size_t srow = static_cast<size_t>(my ? in_h - 1 - y : y) * in_w;
     uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
-    for (int x = 0; x < in_w; x++, src += step)
-      dst[x] = to_index(*src, lo, k);
+    for (int x = 0; x < in_w; x++) {
+      const size_t i = srow + (step < 0 ? in_w - 1 - x : x);
+      const float t = in[i];
+      float v;
+      if (!std::isfinite(t)) {
+        v = 0.0f;
+      } else if (base != nullptr && std::isfinite(base[i])) {
+        const float fb = f(base[i]);
+        v = fb + gain * (f(t) - fb);
+      } else {
+        v = f(t);
+      }
+      dst[x] = static_cast<uint8_t>(std::fmin(std::fmax(v, 0.0f), 255.0f) + 0.5f);
+    }
   }
   return true;
+}
+
+// Histogram equalization with a plateau: a histogram of the in-range values
+// over CURVE_BINS bins, each bin capped at PLATEAU times the mean so a large
+// uniform background cannot claim most of the palette (and turn its noise
+// into colour), then its cumulative sum as the curve. `equalize` mixes it
+// with the linear curve. Successive curves are blended (a quarter of the new
+// one per frame) so the colours do not flicker with noise.
+void CpuIsp::update_curve_(const float *in, size_t n, const Options &o) {
+  constexpr float PLATEAU = 3.0f;
+  constexpr float BLEND = 0.25f;
+  const float lo = o.range_min, hi = o.range_max;
+  const float kb = static_cast<float>(CURVE_BINS) / std::max(hi - lo, 1e-3f);
+  std::array<float, CURVE_BINS + 1> next;
+  for (int i = 0; i <= CURVE_BINS; i++)
+    next[i] = 255.0f * i / CURVE_BINS;  // linear
+  const float e = std::fmin(std::fmax(o.equalize, 0.0f), 1.0f);
+  if (e > 0.0f) {
+    std::array<uint32_t, CURVE_BINS> hist{};
+    uint32_t count = 0;
+    for (size_t i = 0; i < n; i++) {
+      const float pos = (in[i] - lo) * kb;
+      if (pos >= 0.0f && pos <= static_cast<float>(CURVE_BINS)) {  // false for NaN
+        hist[std::min(static_cast<int>(pos), CURVE_BINS - 1)]++;
+        count++;
+      }
+    }
+    if (count > 0) {
+      const float cap = std::max(1.0f, PLATEAU * count / CURVE_BINS);
+      std::array<float, CURVE_BINS + 1> cum;
+      cum[0] = 0.0f;
+      for (int i = 0; i < CURVE_BINS; i++)
+        cum[i + 1] = cum[i] + std::fmin(static_cast<float>(hist[i]), cap);
+      const float total = cum[CURVE_BINS];
+      for (int i = 0; i <= CURVE_BINS; i++)
+        next[i] = (1.0f - e) * next[i] + e * 255.0f * cum[i] / total;
+    }
+  }
+  if (this->curve_valid_ && this->curve_lo_ == lo && this->curve_hi_ == hi) {
+    for (int i = 0; i <= CURVE_BINS; i++)
+      this->curve_[i] += BLEND * (next[i] - this->curve_[i]);
+  } else {
+    this->curve_ = next;
+    this->curve_valid_ = true;
+    this->curve_lo_ = lo;
+    this->curve_hi_ = hi;
+  }
 }
 
 // The per-pixel loop is built for speed (the firmware is built for size,
@@ -236,6 +338,23 @@ void CpuIsp::render(const Options &o, uint8_t *dst, uint32_t stride) const {
     return;
   }
 
+  if (o.upscale == Upscale::BICUBIC) {
+    switch (o.format) {
+      case ImageFormat::RGB565_LE:
+        this->bicubic_<ImageFormat::RGB565_LE>(s, dst, stride);
+        break;
+      case ImageFormat::RGB565_BE:
+        this->bicubic_<ImageFormat::RGB565_BE>(s, dst, stride);
+        break;
+      case ImageFormat::RGB888:
+        this->bicubic_<ImageFormat::RGB888>(s, dst, stride);
+        break;
+      case ImageFormat::GRAY8:
+        this->bicubic_<ImageFormat::GRAY8>(s, dst, stride);
+        break;
+    }
+    return;
+  }
   switch (o.format) {
     case ImageFormat::RGB565_LE:
       this->bilinear_<ImageFormat::RGB565_LE>(s, dst, stride);
@@ -300,6 +419,82 @@ template<ImageFormat F> void CpuIsp::bilinear_(int s, uint8_t *dst, uint32_t str
     }
   }
 }
+
+// Bicubic (Catmull-Rom) on the index field, sampling at pixel centres like
+// bilinear_(). Output pixel q * s + p (input pixel q, phase p) samples at
+// q + (p + 0.5) / s - 0.5, so the taps and weights depend only on the phase:
+// they are worked out once per phase (at most 20). Per output row the four
+// source rows are blended once at input width, then each output pixel is a
+// four-tap blend of that row plus a palette lookup. Catmull-Rom overshoots a
+// little at edges (a slight sharpening); the result is clamped to the palette.
+// Built for speed, like lookup(): it runs once per output pixel.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
+template<ImageFormat F> void CpuIsp::bicubic_(int s, uint8_t *dst, uint32_t stride) const {
+  const int w = this->w_, h = this->h_;
+  constexpr size_t bpp = F == ImageFormat::RGB888 ? 3 : (F == ImageFormat::GRAY8 ? 1 : 2);
+  int off[20];      // first tap relative to q
+  int32_t wt[20][4];  // weights * 256, summing to 256
+  for (int p = 0; p < s; p++) {
+    const float pos = (p + 0.5f) / s - 0.5f;  // in (-0.5, 0.5)
+    const int fl = pos < 0.0f ? -1 : 0;
+    const float t = pos - fl, t2 = t * t, t3 = t2 * t;
+    const float c[4] = {(-t3 + 2 * t2 - t) * 0.5f, (3 * t3 - 5 * t2 + 2) * 0.5f, (-3 * t3 + 4 * t2 + t) * 0.5f,
+                        (t3 - t2) * 0.5f};
+    off[p] = fl - 1;
+    int32_t sum = 0;
+    for (int k = 0; k < 4; k++) {
+      wt[p][k] = static_cast<int32_t>(std::lround(c[k] * 256.0f));
+      sum += wt[p][k];
+    }
+    wt[p][1] += 256 - sum;
+  }
+  std::vector<int32_t> blended(w);  // index * 256, after the vertical blend
+  auto clampi = [](int v, int n) { return v < 0 ? 0 : (v >= n ? n - 1 : v); };
+  for (int qy = 0; qy < h; qy++) {
+    for (int py = 0; py < s; py++) {
+      const uint8_t *r[4];
+      for (int k = 0; k < 4; k++)
+        r[k] = &this->idx_[clampi(qy + off[py] + k, h) * w];
+      const int32_t *wy = wt[py];
+      for (int x = 0; x < w; x++)
+        blended[x] = wy[0] * r[0][x] + wy[1] * r[1][x] + wy[2] * r[2][x] + wy[3] * r[3][x];
+      uint8_t *p = dst + static_cast<size_t>(qy * s + py) * stride;
+      for (int qx = 0; qx < w; qx++) {
+        for (int px = 0; px < s; px++, p += bpp) {
+          const int b = qx + off[px];
+          const int32_t *wx = wt[px];
+          int32_t v = wx[0] * blended[clampi(b, w)] + wx[1] * blended[clampi(b + 1, w)] +
+                      wx[2] * blended[clampi(b + 2, w)] + wx[3] * blended[clampi(b + 3, w)];
+          v = v < 0 ? 0 : (v > (255 << 16) ? (255 << 16) : v);
+          const uint8_t idx = static_cast<uint8_t>((v + (1 << 15)) >> 16);
+          if constexpr (F == ImageFormat::RGB565_LE) {
+            const uint16_t c = this->pal565_le_[idx];
+            p[0] = static_cast<uint8_t>(c & 0xFF);
+            p[1] = static_cast<uint8_t>(c >> 8);
+          } else if constexpr (F == ImageFormat::RGB565_BE) {
+            const uint16_t c = this->pal565_le_[idx];
+            p[0] = static_cast<uint8_t>(c >> 8);
+            p[1] = static_cast<uint8_t>(c & 0xFF);
+          } else if constexpr (F == ImageFormat::RGB888) {
+            const Rgb &c = this->palette_[idx];
+            p[0] = c.r;
+            p[1] = c.g;
+            p[2] = c.b;
+          } else {
+            p[0] = idx;
+          }
+        }
+      }
+    }
+  }
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
 
 }  // namespace isp
 }  // namespace esphome

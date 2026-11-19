@@ -57,9 +57,16 @@ radiometric:
   id: thermal_rad
   source: thermal_sensor
   median_filter: true
+  temporal_frames: 6
+  motion_threshold: 0.5
+  edge_smoothing: 1.0
   controls:
     temporal_frames:
       name: "Thermal Smoothing"
+    motion_threshold:
+      name: "Thermal Motion Threshold"
+    edge_smoothing:
+      name: "Thermal Edge Smoothing"
     median_filter:
       name: "Thermal Median Filter"
     outlier_level:
@@ -80,9 +87,15 @@ isp:
   source: thermal_rad
   scale: 20
   mirror_x: true
-  upscale: bilinear
+  upscale: bicubic
+  equalize: 60
+  detail: 1.0
   log_timing: true
   controls:
+    equalize:
+      name: "Thermal Equalization"
+    detail:
+      name: "Thermal Detail"
     range_min:
       name: "Thermal Range Min"
     range_max:

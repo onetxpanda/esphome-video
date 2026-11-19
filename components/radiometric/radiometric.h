@@ -33,6 +33,8 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
 
   // Options; thread-safe.
   void set_temporal_frames(float n);
+  void set_motion_threshold(float v);
+  void set_edge_smoothing(float v);
   void set_median_filter(bool v);
   void set_outlier_level(float v);
   // Configuration (before setup).
@@ -64,8 +66,8 @@ class Radiometric : public PollingComponent, public video::RadiometricSink, publ
   Stats latest_;
   bool log_timing_{false};
   std::atomic<uint32_t> process_us_{0}, processed_{0};
-  // wants_frames(): when the last frame arrived, and whether a temporal
-  // average needs every frame.
+  // wants_frames(): when the last frame arrived, and whether the temporal
+  // filter needs every frame.
   std::atomic<uint32_t> last_frame_ms_{0};
   std::atomic<bool> temporal_{false};
   uint32_t last_timing_ms_{0};
