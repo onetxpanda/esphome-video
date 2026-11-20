@@ -237,8 +237,8 @@ isp:
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear, bicubic), `scaler` (cpu, ppa), `equalize`
   (percent; 0 = linear), `detail` (gain; 0 = off). Controls: `range_min`,
-  `range_max`, `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`,
-  `detail`.
+  `range_max` (temperatures in °C, so Home Assistant shows them in its own
+  unit), `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`, `detail`.
 - **overlay**: `marks` (min, max, center), `hold` (how often a mark's
   position and value are refreshed; default 1 s), `unit` (C, F),
   `enabled`. Controls: `enabled`, `unit`.

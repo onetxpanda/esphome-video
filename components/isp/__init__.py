@@ -23,7 +23,7 @@ from esphome.components.video_core import (
     inherit_device_id,
 )
 import esphome.config_validation as cv
-from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE
+from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE, DEVICE_CLASS_TEMPERATURE, UNIT_CELSIUS
 
 CODEOWNERS = ["@onetxpanda"]
 MULTI_CONF = True  # e.g. one chain per camera
@@ -102,8 +102,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DETAIL, default=0): cv.float_range(min=0, max=4),
             cv.Optional(CONF_CONTROLS, default={}): cv.Schema(
                 {
-                    cv.Optional(CONF_RANGE_MIN): number_control(),
-                    cv.Optional(CONF_RANGE_MAX): number_control(),
+                    # Temperatures in degrees C, so Home Assistant shows and
+                    # takes them in its own unit
+                    cv.Optional(CONF_RANGE_MIN): number_control(
+                        unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE
+                    ),
+                    cv.Optional(CONF_RANGE_MAX): number_control(
+                        unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE
+                    ),
                     cv.Optional(CONF_MIRROR_X): switch_control(),
                     cv.Optional(CONF_MIRROR_Y): switch_control(),
                     cv.Optional(CONF_UPSCALE): select_control(),
