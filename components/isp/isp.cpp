@@ -1,6 +1,7 @@
 #include "isp.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "esphome/core/hal.h"
@@ -42,6 +43,31 @@ void Isp::setup() {
     this->mark_failed(LOG_STR("An overlay must be the only consumer of its source; chain other consumers after it"));
     return;
   }
+  if (this->spots_key_ != 0) {
+    this->spots_pref_ = global_preferences->make_preference<SpotStore>(this->spots_key_);
+    SpotStore st{};
+    if (this->spots_pref_.load(&st) && st.count <= MAX_SPOTS) {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      this->spot_count_ = 0;
+      for (uint8_t i = 0; i < st.count; i++) {
+        Spot sp = st.spots[i];
+        if (!(std::isfinite(sp.x) && std::isfinite(sp.y) && sp.x >= 0 && sp.x <= 1 && sp.y >= 0 && sp.y <= 1 &&
+              sp.material < MATERIAL_COUNT))
+          continue;
+        // Each spot keeps its colour; a missing or repeated one gets a free one.
+        bool taken = sp.color >= MAX_SPOTS;
+        for (uint8_t j = 0; j < this->spot_count_ && !taken; j++)
+          taken = this->spots_[j].color == sp.color;
+        if (taken)
+          sp.color = free_spot_color(this->spots_.data(), this->spot_count_);
+        this->spots_[this->spot_count_++] = sp;
+      }
+    }
+  }
+#ifdef USE_TEXT_SENSOR
+  if (this->spots_sensor_ != nullptr)
+    this->spots_sensor_->publish_state(format_spots(this->spots_.data(), this->spot_count_));
+#endif
 #ifdef USE_ISP_PPA
   ppa_client_config_t cfg{};
   cfg.oper_type = PPA_OPERATION_SRM;
@@ -71,6 +97,13 @@ void Isp::dump_config() {
                 : this->opt_.upscale == Upscale::BILINEAR ? "bilinear"
                                                           : "nearest",
                 this->scaler_ == Scaler::PPA ? "PPA" : "CPU", this->opt_.equalize * 100.0f, this->opt_.detail);
+  ESP_LOGCONFIG(TAG, "  Spots: %u of %u", this->spot_count_, MAX_SPOTS);
+  for (uint8_t i = 0; i < this->spot_count_; i++)
+    ESP_LOGCONFIG(TAG, "    %u: %.1f%%, %.1f%%, %s, colour %u", i + 1, this->spots_[i].x * 100.0f,
+                  this->spots_[i].y * 100.0f, MATERIALS[this->spots_[i].material].label, this->spots_[i].color);
+#ifdef USE_TEXT_SENSOR
+  LOG_TEXT_SENSOR("  ", "Spots", this->spots_sensor_);
+#endif
 #ifndef USE_ISP_PPA
   if (this->scaler_ == Scaler::PPA)
     ESP_LOGW(TAG, "  The PPA exists only on the ESP32-P4; scaling on the CPU");
@@ -110,6 +143,67 @@ void Isp::set_detail(float gain) {
   this->opt_.detail = std::max(gain, 0.0f);
 }
 
+void Isp::toggle_spot(float x_percent, float y_percent, const std::string &material) {
+  bool changed, full;
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    changed = isp::toggle_spot(this->spots_.data(), this->spot_count_, x_percent / 100.0f, y_percent / 100.0f,
+                               this->aspect_, material_index(material));
+    full = this->spot_count_ >= MAX_SPOTS;
+  }
+  if (changed) {
+    this->spots_changed_();
+  } else if (full) {
+    ESP_LOGW(TAG, "Already %u spots; remove one first", MAX_SPOTS);
+  }
+}
+
+void Isp::set_spot_material(int spot, const std::string &material) {
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (spot < 1 || spot > this->spot_count_)
+      return;
+    this->spots_[spot - 1].material = material_index(material);
+  }
+  this->spots_changed_();
+}
+
+void Isp::remove_spot(int spot) {
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (spot < 1 || spot > this->spot_count_)
+      return;
+    for (int i = spot - 1; i + 1 < this->spot_count_; i++)
+      this->spots_[i] = this->spots_[i + 1];
+    this->spot_count_--;
+  }
+  this->spots_changed_();
+}
+
+void Isp::clear_spots() {
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->spot_count_ = 0;
+  }
+  this->spots_changed_();
+}
+
+void Isp::spots_changed_() {
+  SpotStore st{};
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    st.count = this->spot_count_;
+    for (uint8_t i = 0; i < this->spot_count_; i++)
+      st.spots[i] = this->spots_[i];
+  }
+  if (this->spots_key_ != 0)
+    this->spots_pref_.save(&st);
+#ifdef USE_TEXT_SENSOR
+  if (this->spots_sensor_ != nullptr)
+    this->spots_sensor_->publish_state(format_spots(st.spots, st.count));
+#endif
+}
+
 void Isp::on_radiometric_frame(const video::RadiometricFrame &frame) {
   if (this->task_ == nullptr)
     return;
@@ -131,6 +225,8 @@ void Isp::task_loop_() {
     video::RadiometricFrame f;
     Options o;
     Scaler scaler;
+    std::array<Spot, MAX_SPOTS> spots;
+    uint8_t spot_count;
     {
       std::lock_guard<std::mutex> lock(this->mutex_);
       if (!this->has_pending_)
@@ -140,17 +236,22 @@ void Isp::task_loop_() {
       this->has_pending_ = false;
       o = this->opt_;
       scaler = this->scaler_;
+      spots = this->spots_;
+      spot_count = this->spot_count_;
+      if (f.width > 0 && f.height > 0)
+        this->aspect_ = static_cast<float>(f.width) / f.height;
     }
     const uint8_t palette = this->palette_.load();
     if (palette != this->palette_applied_) {
       this->cpu_.set_palette(make_palette(static_cast<Palette>(palette)));
       this->palette_applied_ = palette;
     }
-    this->process_(f, o, scaler);
+    this->process_(f, o, scaler, spots.data(), spot_count);
   }
 }
 
-void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler) {
+void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler, const Spot *spots,
+                   uint8_t spot_count) {
   const int s = o.scale < 1 ? 1 : o.scale;
   // Unscaled linear output is tone-mapped straight into the output frame,
   // below; everything else goes through the index image.
@@ -215,6 +316,15 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
     a.x = static_cast<float>(p.x);
     a.y = static_cast<float>(p.y);
     out.annotations.add(a);
+  }
+  // Spots: placed on the image as shown, measured on the input under them
+  // and corrected for their material.
+  for (uint8_t i = 0; i < spot_count; i++) {
+    const Point p = spot_point(out.width, out.height, spots[i].x, spots[i].y);
+    const float v = correct_emissivity(spot_value(in.temps(), in.width, in.height, o, spots[i].x, spots[i].y),
+                                       in.emissivity, MATERIALS[spots[i].material].emissivity, in.reflected);
+    out.annotations.add(
+        {static_cast<float>(p.x), static_cast<float>(p.y), v, video::AnnotationKind::SPOT, spots[i].color});
   }
   this->sinks_.deliver(out, [](video::ImageSink *sk, const video::ImageFrame &fr) { sk->on_image_frame(fr); });
   const uint32_t t3 = micros();

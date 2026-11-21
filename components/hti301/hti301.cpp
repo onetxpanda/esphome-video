@@ -663,6 +663,8 @@ void HTI301::process_radiometric_(const video::FrameRef &raw, uint32_t ts) {
   f.height = this->image_rows_;
   f.timestamp_ms = ts;
   f.sequence = ++this->sequence_;
+  f.emissivity = env.emissivity;
+  f.reflected = env.reflected;
   this->rad_sinks_.deliver(f, [](video::RadiometricSink *s, const video::RadiometricFrame &fr) {
     s->on_radiometric_frame(fr);
   });

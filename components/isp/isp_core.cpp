@@ -1,7 +1,9 @@
 #include "isp_core.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace esphome {
@@ -14,6 +16,137 @@ Point map_point(const Options &o, uint16_t in_w, uint16_t in_h, float x, float y
   const float my = o.mirror_y ? (in_h - 1) - y : y;
   const int s = std::max<int>(o.scale, 1);
   return Point{static_cast<int>(mx * s + s / 2), static_cast<int>(my * s + s / 2)};
+}
+
+static inline float clamp01(float f) { return f > 0.0f ? (f < 1.0f ? f : 1.0f) : 0.0f; }  // NaN: 0
+
+Point spot_point(uint16_t out_w, uint16_t out_h, float fx, float fy) {
+  // Rounded, so a fraction that is a whole pixel in exact arithmetic is that pixel.
+  auto at = [](float f, int n) { return std::max(0, std::min(static_cast<int>(clamp01(f) * n + 0.5f), n - 1)); };
+  return Point{at(fx, out_w), at(fy, out_h)};
+}
+
+float spot_value(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, float fx, float fy) {
+  if (in == nullptr || in_w == 0 || in_h == 0)
+    return 0.0f;
+  // Input pixel i spans [i, i + 1) of the width; its centre is at i + 0.5.
+  float u = clamp01(fx) * in_w - 0.5f, v = clamp01(fy) * in_h - 0.5f;
+  if (o.mirror_x)
+    u = (in_w - 1) - u;
+  if (o.mirror_y)
+    v = (in_h - 1) - v;
+  u = std::min(std::max(u, 0.0f), static_cast<float>(in_w - 1));
+  v = std::min(std::max(v, 0.0f), static_cast<float>(in_h - 1));
+  const int x0 = static_cast<int>(u), y0 = static_cast<int>(v);
+  const int x1 = std::min(x0 + 1, in_w - 1), y1 = std::min(y0 + 1, in_h - 1);
+  const float ax = u - x0, ay = v - y0;
+  const float top = in[y0 * in_w + x0] * (1 - ax) + in[y0 * in_w + x1] * ax;
+  const float bottom = in[y1 * in_w + x0] * (1 - ax) + in[y1 * in_w + x1] * ax;
+  return top * (1 - ay) + bottom * ay;
+}
+
+const Material MATERIALS[] = {
+    {"default", "Default", 0.0f},
+    {"tortoise_shell", "Tortoise shell", 0.96f},
+    {"skin", "Skin", 0.98f},
+    {"black_plastic", "Black plastic", 0.95f},
+    {"plastic", "Plastic", 0.92f},
+    {"rubber", "Rubber", 0.95f},
+    {"wood", "Wood", 0.90f},
+    {"paper", "Paper, cardboard", 0.93f},
+    {"fabric", "Fabric", 0.95f},
+    {"water", "Water", 0.96f},
+    {"glass", "Glass", 0.92f},
+    {"ceramic", "Ceramic tile", 0.92f},
+    {"concrete", "Concrete", 0.94f},
+    {"brick", "Brick", 0.93f},
+    {"soil", "Soil", 0.94f},
+    {"sand", "Sand", 0.90f},
+    {"plants", "Plants", 0.96f},
+    {"paint", "Painted surface", 0.93f},
+    {"anodized", "Aluminum, anodized", 0.77f},
+    {"aluminum", "Aluminum, bare", 0.10f},
+    {"stainless_steel", "Stainless steel", 0.16f},
+};
+const uint8_t MATERIAL_COUNT = sizeof(MATERIALS) / sizeof(MATERIALS[0]);
+
+static bool same_name(const std::string &a, const char *b) {
+  size_t i = 0;
+  for (; i < a.size() && b[i] != '\0'; i++)
+    if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+      return false;
+  return i == a.size() && b[i] == '\0';
+}
+
+uint8_t material_index(const std::string &name) {
+  for (uint8_t i = 0; i < MATERIAL_COUNT; i++)
+    if (same_name(name, MATERIALS[i].key) || same_name(name, MATERIALS[i].label))
+      return i;
+  return 0;
+}
+
+float correct_emissivity(float t, float e_source, float e, float reflected) {
+  if (!(e > 0.0f && e <= 1.0f) || !(e_source > 0.0f && e_source <= 1.0f) || !std::isfinite(reflected) || e == e_source)
+    return t;
+  // The radiance the source saw: e_source * T^4 + (1 - e_source) * R^4 for
+  // its temperature T, and e * To^4 + (1 - e) * R^4 for the surface's.
+  constexpr double ZERO_C = 273.15;
+  const double ts = static_cast<double>(t) + ZERO_C, r = static_cast<double>(reflected) + ZERO_C;
+  const double ts4 = ts * ts * ts * ts, r4 = r * r * r * r;
+  const double to4 = (e_source * ts4 + (e - e_source) * r4) / e;
+  // Below zero: the source saw less than the background reflects off such a
+  // surface; the coldest it can be.
+  return to4 > 0 ? static_cast<float>(std::sqrt(std::sqrt(to4)) - ZERO_C) : static_cast<float>(-ZERO_C);
+}
+
+std::string format_spots(const Spot *spots, uint8_t count) {
+  std::string s;
+  char buf[48];
+  for (uint8_t i = 0; i < count; i++) {
+    const uint8_t m = spots[i].material < MATERIAL_COUNT ? spots[i].material : 0;
+    std::snprintf(buf, sizeof(buf), "%s%.1f,%.1f,%s,%u", i ? ";" : "", spots[i].x * 100.0f, spots[i].y * 100.0f,
+                  MATERIALS[m].key, spots[i].color);
+    s += buf;
+  }
+  return s;
+}
+
+uint8_t free_spot_color(const Spot *spots, uint8_t count) {
+  uint32_t used = 0;
+  for (uint8_t i = 0; i < count; i++)
+    used |= 1u << (spots[i].color & 31);
+  for (uint8_t c = 0; c < MAX_SPOTS; c++)
+    if (!(used & (1u << c)))
+      return c;
+  return MAX_SPOTS;
+}
+
+bool toggle_spot(Spot *spots, uint8_t &count, float fx, float fy, float aspect, uint8_t material) {
+  fx = clamp01(fx);
+  fy = clamp01(fy);
+  int nearest = -1;
+  float best = SPOT_HIT_RADIUS * SPOT_HIT_RADIUS;
+  for (uint8_t i = 0; i < count; i++) {
+    // Distances in image heights, so the radius is round on screen.
+    const float dx = (spots[i].x - fx) * aspect, dy = spots[i].y - fy;
+    const float d = dx * dx + dy * dy;
+    if (d <= best) {
+      best = d;
+      nearest = i;
+    }
+  }
+  if (nearest >= 0) {
+    for (uint8_t i = nearest; i + 1 < count; i++)
+      spots[i] = spots[i + 1];
+    count--;
+    return true;
+  }
+  if (count >= MAX_SPOTS)
+    return false;
+  const uint8_t color = free_spot_color(spots, count);
+  spots[count] = Spot{fx, fy, material < MATERIAL_COUNT ? material : static_cast<uint8_t>(0), color};
+  count++;
+  return true;
 }
 
 void CpuIsp::set_palette(const std::array<Rgb, 256> &palette) {

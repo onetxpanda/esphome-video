@@ -22,6 +22,28 @@ external_components:
 
 logger:
 api:
+  actions:
+    - action: thermal_spot
+      variables:
+        x: float
+        y: float
+        material: string
+      then:
+        - lambda: 'id(thermal_isp)->toggle_spot(x, y, material);'
+    - action: thermal_spot_material
+      variables:
+        spot: int
+        material: string
+      then:
+        - lambda: 'id(thermal_isp)->set_spot_material(spot, material);'
+    - action: thermal_remove_spot
+      variables:
+        spot: int
+      then:
+        - lambda: 'id(thermal_isp)->remove_spot(spot);'
+    - action: thermal_clear_spots
+      then:
+        - lambda: 'id(thermal_isp)->clear_spots();'
 ota:
   - platform: esphome
 
@@ -106,6 +128,10 @@ isp:
       name: "Thermal Upscale"
     scaler:
       name: "Thermal Scaler"
+    clear_spots:
+      name: "Thermal Clear Spots"
+  spots:
+    name: "Thermal Spots"
 
 overlay:
   id: thermal_overlay

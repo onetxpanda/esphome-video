@@ -121,6 +121,8 @@ void Radiometric::on_radiometric_frame(const video::RadiometricFrame &in) {
     out.height = in.height;
     out.timestamp_ms = in.timestamp_ms;
     out.sequence = in.sequence;
+    out.emissivity = in.emissivity;
+    out.reflected = in.reflected;
     if (!this->processor_.process(in.temps(), out.temps(), in.width, in.height)) {
       if (!this->memory_error_logged_) {
         ESP_LOGE(TAG, "Out of memory for %ux%u processing buffers; frames are dropped", in.width, in.height);

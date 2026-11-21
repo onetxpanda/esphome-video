@@ -17,10 +17,11 @@ void Overlay::setup() {
 void Overlay::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "Overlay:\n"
-                "  Marks:%s%s%s\n"
+                "  Marks:%s%s%s%s\n"
                 "  Value hold: %u ms, unit: %s, enabled: %s",
                 this->kinds_ & (1u << 0) ? " min" : "", this->kinds_ & (1u << 1) ? " max" : "",
-                this->kinds_ & (1u << 2) ? " center" : "", static_cast<unsigned>(this->hold_ms_),
+                this->kinds_ & (1u << 2) ? " center" : "", this->kinds_ & (1u << 4) ? " spots" : "",
+                static_cast<unsigned>(this->hold_ms_),
                 this->unit_ ? "F" : "C", YESNO(this->enabled_.load()));
 }
 
@@ -38,7 +39,10 @@ void Overlay::on_image_frame(const video::ImageFrame &frame) {
       const float v = f ? s.value * 9.0f / 5.0f + 32.0f : s.value;
       char text[16];
       std::snprintf(text, sizeof(text), "%.1f\xB0%c", v, f ? 'F' : 'C');
-      this->marks_.push_back(Mark{s.x, s.y, text});
+      Mark m{s.x, s.y, text};
+      if (s.kind == video::AnnotationKind::SPOT)
+        m.color = SPOT_COLORS[s.index % SPOT_COLOR_COUNT];
+      this->marks_.push_back(m);
     }
     // Draws into the pixels: the frame is ours alone until delivered (see
     // modifies_frames()).

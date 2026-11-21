@@ -5,6 +5,7 @@
 // arrive faster than they are processed, only the newest waits (older ones
 // are dropped). Scaling uses the CPU or, on the ESP32-P4, the PPA.
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -13,6 +14,10 @@
 #include <freertos/task.h>
 
 #include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
 
 #include "../video_core/frame.h"
 #include "isp_core.h"
@@ -64,15 +69,46 @@ class Isp : public Component,
   void set_equalize(float percent);
   void set_detail(float gain);
 
+  // Spot meters, placed at run time (e.g. by clicks on the image, through API
+  // actions): each adds an annotation with the temperature under it,
+  // corrected for its material, for an overlay. Up to MAX_SPOTS, kept across
+  // reboots under `key`. Main loop (API actions, buttons).
+  // Removes the spot at (x, y), in percent of the image as shown from the top
+  // left, or adds one of `material` (a key or label of MATERIALS) there.
+  void toggle_spot(float x_percent, float y_percent, const std::string &material);
+  // Spots are numbered from 1, in the order placed.
+  void set_spot_material(int spot, const std::string &material);
+  void remove_spot(int spot);
+  void clear_spots();
+  void set_spots_key(uint32_t key) { this->spots_key_ = key; }
+#ifdef USE_TEXT_SENSOR
+  // The spots as "x,y,material,color;..." (see format_spots).
+  void set_spots_text_sensor(text_sensor::TextSensor *s) { this->spots_sensor_ = s; }
+#endif
+
  protected:
   static void task_entry_(void *arg);
   void task_loop_();
-  void process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler);
+  void process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler, const Spot *spots,
+                uint8_t spot_count);
   bool render_ppa_(const Options &o, video::ImageFrame &out);
 
-  std::mutex mutex_;  // guards opt_, scaler_ and pending_
+  std::mutex mutex_;  // guards opt_, scaler_, spots_ and pending_
   Options opt_;
   Scaler scaler_{Scaler::CPU};
+  std::array<Spot, MAX_SPOTS> spots_{};
+  uint8_t spot_count_{0};
+  float aspect_{4.0f / 3.0f};  // of the last frame (width / height), for toggle_spot
+  struct SpotStore {
+    uint8_t count;
+    Spot spots[MAX_SPOTS];
+  };
+  void spots_changed_();  // main loop: saves and publishes them
+  uint32_t spots_key_{0};
+  ESPPreferenceObject spots_pref_;
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *spots_sensor_{nullptr};
+#endif
   std::atomic<uint8_t> palette_{static_cast<uint8_t>(Palette::IRONBOW)};
   uint8_t palette_applied_{0xFF};  // ISP task only
   video::RadiometricFrame pending_;

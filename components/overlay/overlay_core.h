@@ -16,9 +16,18 @@
 namespace esphome {
 namespace overlay {
 
+struct Color {
+  uint8_t r, g, b;
+};
+// Spot reticles' colours, by the spot's colour index (an annotation's index);
+// every other mark is white.
+static constexpr uint8_t SPOT_COLOR_COUNT = 8;
+extern const Color SPOT_COLORS[SPOT_COLOR_COUNT];
+
 struct Mark {
   int x, y;           // reticle centre, image pixels
   std::string label;  // characters available in overlay_font.h
+  Color color{255, 255, 255};  // reticle and label (GRAY8 images: its luminance)
 };
 
 struct Style {
@@ -46,13 +55,14 @@ std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &ma
 // value are refreshed together at most once per hold time, so neither the
 // reticle nor its label jumps with every frame's noise. Kept per annotation
 // kind (the first of each kind; any further one of the same kind shows as it
-// comes).
+// comes), and per spot. A spot moved by the user moves at once.
 class MarkHold {
  public:
   struct Shown {
     int x, y;  // image pixels
     float value;
     video::AnnotationKind kind;
+    uint8_t index;  // the annotation's (a spot's colour)
   };
   // Takes a frame's annotations of the kinds in `kinds` (a bit per
   // AnnotationKind) at `now_ms`; returns what to draw.
@@ -67,7 +77,9 @@ class MarkHold {
     float value{0};
     uint32_t since_ms{0};  // when the position and value shown were taken
   };
-  static constexpr size_t SLOTS = 8;
+  // One per kind below SPOT, then one per spot index.
+  static constexpr size_t SPOT_SLOTS = 8;
+  static constexpr size_t SLOTS = static_cast<size_t>(video::AnnotationKind::SPOT) + SPOT_SLOTS;
   Slot slots_[SLOTS];
   std::vector<Shown> shown_;
 };

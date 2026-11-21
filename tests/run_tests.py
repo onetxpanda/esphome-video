@@ -379,6 +379,23 @@ def esphome_tests(esphome):
               f"{yaml}: build guard confirmed v3 registers for the rev 3.01 target")
 
 
+def card_tests():
+    """The dashboard card offers the firmware's materials, by the same keys,
+    in the same order, with the same emissivities."""
+    print("== dashboard card")
+    cpp = open(os.path.join(COMP, "isp", "isp_core.cpp")).read()
+    js = open(os.path.join(ROOT, "ha", "thermal-spot-card.js")).read()
+    fw = re.findall(r'\{"(\w+)", "([^"]+)", ([0-9.]+)f\}', cpp)
+    card = re.findall(r"\['(\w+)', '([^']+?)(?: \(([0-9.]+)\))?'\]", js)
+    check(len(fw) > 1 and [k for k, _, _ in fw] == [k for k, _, _ in card], "card materials match the firmware's keys")
+    check(all(lc.startswith(lf) and (float(e) == 0 if not ec else abs(float(e) - float(ec)) < 1e-6)
+              for (_, lf, e), (_, lc, ec) in zip(fw, card)), "card material labels and emissivities match")
+    ov = open(os.path.join(COMP, "overlay", "overlay_core.cpp")).read()
+    fw_colors = re.findall(r"\{(\d+), (\d+), (\d+)\},\s+// \w+", ov)
+    card_colors = re.findall(r"'rgb\((\d+), (\d+), (\d+)\)'", js)
+    check(len(fw_colors) == 8 and fw_colors == card_colors, "card spot colours match the overlay's")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--esphome", default=shutil.which("esphome") or "esphome")
@@ -393,6 +410,7 @@ def main():
     pipeline_unit_tests()
     unit_tests()
     guard_tests()
+    card_tests()
     srcs =[os.path.join(RTSP, "rtsp_core.cpp"), os.path.join(RTSP, "rtsp_server_core.cpp"),
             os.path.join(HERE, "host", "rtsp_host.cpp")]
     asan = build("rtsp_host_asan", srcs, ASAN)

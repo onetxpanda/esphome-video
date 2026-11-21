@@ -695,7 +695,125 @@ static void test_adopt() {
   CHECK(!p.analyze(t.data(), w, h));  // which analyze() agrees needs repair
 }
 
+// Spots: placed on the image as shown, measured on the input under them.
+static void test_spots() {
+  isp::Options o;
+  o.scale = 20;
+  std::vector<float> t(N);
+  for (int y = 0; y < H; y++)
+    for (int x = 0; x < W; x++)
+      t[y * W + x] = 10.0f * x + 1000.0f * y;  // a ramp: bilinear is exact on it
+  // The centre of the image lies between pixels 15 and 16, rows 11 and 12.
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 0.5f, 0.5f), 155.0f + 11500.0f, 1e-2f));
+  // A pixel's centre gives that pixel's value.
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 3.5f / W, 2.5f / H), 30.0f + 2000.0f, 1e-2f));
+  // Edges and beyond clamp to the outermost pixels.
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 0.0f, 0.0f), 0.0f, 1e-3f));
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 1.0f, 1.0f), 310.0f + 23000.0f, 1e-2f));
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, -1.0f, NAN), 0.0f, 1e-3f));
+  // Mirrored: the spot stays where it is on the image, so it measures the
+  // pixel that is now shown there.
+  o.mirror_x = true;
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 3.5f / W, 2.5f / H), 280.0f + 2000.0f, 1e-2f));
+  o.mirror_y = true;
+  CHECK(NEAR(isp::spot_value(t.data(), W, H, o, 3.5f / W, 2.5f / H), 280.0f + 21000.0f, 1e-2f));
+  // ... and it agrees with map_point: the input pixel measured is drawn under the spot.
+  const isp::Point drawn = isp::map_point(o, W, H, 28, 21);
+  const isp::Point spot = isp::spot_point(W * 20, H * 20, 3.5f / W, 2.5f / H);
+  CHECK(drawn.x == spot.x && drawn.y == spot.y);
+  // Output pixels: inside the image whatever the fraction.
+  isp::Point p = isp::spot_point(640, 480, 0.5f, 0.25f);
+  CHECK(p.x == 320 && p.y == 120);
+  p = isp::spot_point(640, 480, 1.0f, 2.0f);
+  CHECK(p.x == 639 && p.y == 479);
+  p = isp::spot_point(640, 480, -0.5f, 0.0f);
+  CHECK(p.x == 0 && p.y == 0);
+  CHECK(isp::spot_value(nullptr, W, H, o, 0.5f, 0.5f) == 0.0f);
+
+  // Clicks: on empty image add a spot, on a spot remove it.
+  isp::Spot sp[isp::MAX_SPOTS];
+  uint8_t n = 0;
+  const float aspect = 4.0f / 3.0f;
+  CHECK(isp::toggle_spot(sp, n, 0.25f, 0.5f, aspect, 1) && n == 1 && sp[0].material == 1);
+  CHECK(isp::toggle_spot(sp, n, 0.75f, 0.5f, aspect, 0) && n == 2);
+  CHECK(isp::toggle_spot(sp, n, 0.27f, 0.52f, aspect, 3) && n == 1 && NEAR(sp[0].x, 0.75f, 1e-6f));  // near: removed
+  // The radius is round on screen: 0.06 of the height is 0.045 of a 4:3 width.
+  CHECK(isp::toggle_spot(sp, n, 0.75f + 0.05f, 0.5f, aspect, 0) && n == 2);  // just outside: added
+  CHECK(isp::toggle_spot(sp, n, 0.75f, 0.5f + 0.055f, aspect, 0) && n == 1);  // inside: removed (the nearer)
+  n = 0;
+  for (int i = 0; i < isp::MAX_SPOTS; i++)
+    CHECK(isp::toggle_spot(sp, n, 0.1f * i + 0.05f, 0.1f, aspect, 0));
+  CHECK(!isp::toggle_spot(sp, n, 0.5f, 0.9f, aspect, 0) && n == isp::MAX_SPOTS);  // full: nothing added
+  CHECK(isp::toggle_spot(sp, n, 0.05f, 0.1f, aspect, 0) && n == isp::MAX_SPOTS - 1);  // removing still works
+  CHECK(isp::toggle_spot(sp, n, 2.0f, -1.0f, aspect, 200) && sp[n - 1].x == 1.0f && sp[n - 1].y == 0.0f &&
+        sp[n - 1].material == 0);  // clamped; unknown material: default
+
+  // Colours: each new spot the lowest one free; a spot keeps its colour when
+  // others go.
+  n = 0;
+  isp::toggle_spot(sp, n, 0.1f, 0.5f, aspect, 0);
+  isp::toggle_spot(sp, n, 0.3f, 0.5f, aspect, 0);
+  isp::toggle_spot(sp, n, 0.5f, 0.5f, aspect, 0);
+  CHECK(n == 3 && sp[0].color == 0 && sp[1].color == 1 && sp[2].color == 2);
+  isp::toggle_spot(sp, n, 0.1f, 0.5f, aspect, 0);  // the first goes
+  CHECK(n == 2 && sp[0].color == 1 && sp[1].color == 2);  // the others keep theirs
+  isp::toggle_spot(sp, n, 0.7f, 0.5f, aspect, 0);
+  CHECK(n == 3 && sp[2].color == 0);  // the freed colour is reused
+  n = 0;
+  for (int i = 0; i < isp::MAX_SPOTS; i++)
+    isp::toggle_spot(sp, n, 0.1f * i + 0.05f, 0.3f, aspect, 0);
+  bool distinct = true;
+  for (int i = 0; i < n; i++)
+    for (int j = i + 1; j < n; j++)
+      distinct = distinct && sp[i].color != sp[j].color;
+  CHECK(n == isp::MAX_SPOTS && distinct && isp::free_spot_color(sp, n) == isp::MAX_SPOTS);
+
+  // Materials by key or label, any case; unknown: default.
+  CHECK(isp::material_index("tortoise_shell") == isp::material_index("Tortoise Shell"));
+  CHECK(isp::MATERIALS[isp::material_index("Tortoise shell")].emissivity == 0.96f);
+  CHECK(isp::material_index("aluminum") != 0 && isp::material_index("unobtainium") == 0 &&
+        isp::material_index("") == 0 && isp::material_index("tortoise") == 0);
+  for (uint8_t i = 1; i < isp::MATERIAL_COUNT; i++)
+    CHECK(isp::MATERIALS[i].emissivity > 0.0f && isp::MATERIALS[i].emissivity <= 1.0f);
+
+  // Emissivity: the same emissivity, or one unknown, changes nothing.
+  CHECK(isp::correct_emissivity(30.0f, 0.95f, 0.95f, 15.0f) == 30.0f);
+  CHECK(isp::correct_emissivity(30.0f, NAN, 0.9f, 15.0f) == 30.0f);
+  CHECK(isp::correct_emissivity(30.0f, 0.95f, 0.0f, 15.0f) == 30.0f);  // default material
+  CHECK(isp::correct_emissivity(30.0f, 0.95f, 0.9f, NAN) == 30.0f);
+  // At the reflected temperature every emissivity reads the same.
+  CHECK(NEAR(isp::correct_emissivity(20.0f, 0.95f, 0.3f, 20.0f), 20.0f, 1e-3f));
+  // Warmer than the background: a lower emissivity means the surface is warmer than it read.
+  const float wood = isp::correct_emissivity(30.0f, 0.95f, 0.90f, 15.0f);
+  const float bare = isp::correct_emissivity(30.0f, 0.95f, 0.10f, 15.0f);
+  CHECK(wood > 30.5f && wood < 31.5f && bare > wood);
+  // Round trip: what a source at 0.95 reports for a 0.9 surface at 40 C, corrected, is 40 C.
+  {
+    const double k = 273.15, to = 40 + k, r = 15 + k;
+    const double w = 0.9 * to * to * to * to + 0.1 * r * r * r * r;  // radiance seen
+    const double ts = std::pow((w - 0.05 * r * r * r * r) / 0.95, 0.25) - k;  // as the source computes it
+    CHECK(NEAR(isp::correct_emissivity(static_cast<float>(ts), 0.95f, 0.9f, 15.0f), 40.0f, 1e-3f));
+  }
+  // Colder than the background: lower emissivity, colder surface.
+  CHECK(isp::correct_emissivity(5.0f, 0.95f, 0.9f, 15.0f) < 5.0f);
+
+  // The list as text for the card.
+  isp::Spot two[2] = {{0.25f, 0.5f, isp::material_index("wood"), 3}, {1.0f, 0.0f, 0, 0}};
+  CHECK(isp::format_spots(two, 2) == "25.0,50.0,wood,3;100.0,0.0,default,0");
+  CHECK(isp::format_spots(two, 0).empty());
+  // The longest list fits a Home Assistant state (255 characters).
+  isp::Spot most[isp::MAX_SPOTS];
+  uint8_t longest = 0;
+  for (uint8_t i = 0; i < isp::MATERIAL_COUNT; i++)
+    if (std::strlen(isp::MATERIALS[i].key) > std::strlen(isp::MATERIALS[longest].key))
+      longest = i;
+  for (uint8_t i = 0; i < isp::MAX_SPOTS; i++)
+    most[i] = isp::Spot{1.0f, 1.0f, longest, i};
+  CHECK(isp::format_spots(most, isp::MAX_SPOTS).size() <= 255);
+}
+
 int main() {
+  test_spots();
   test_palettes();
   test_map_direct();
   test_lookup();

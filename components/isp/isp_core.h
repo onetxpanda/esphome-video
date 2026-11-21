@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "../video_core/frame.h"
@@ -53,6 +54,59 @@ struct Point {
   int x, y;
 };
 Point map_point(const Options &o, uint16_t in_w, uint16_t in_h, float x, float y);
+
+// Spot meters: points placed on the output image as it is shown (after
+// mirroring), in fractions of its width and height from the top left (0..1).
+static constexpr uint8_t MAX_SPOTS = 8;
+struct Spot {
+  float x{0.5f}, y{0.5f};
+  uint8_t material{0};  // index into MATERIALS
+  // 0..MAX_SPOTS-1, different for each spot and kept while it exists: tells
+  // spots apart (an overlay draws each in its own colour).
+  uint8_t color{0};
+};
+
+// Surfaces a spot can be set to, with their emissivity (long-wave infrared,
+// typical values; a real surface varies with finish and angle). The first,
+// "default", has none: the spot shows the temperature as the source computed
+// it.
+struct Material {
+  const char *key;
+  const char *label;
+  float emissivity;
+};
+extern const Material MATERIALS[];
+extern const uint8_t MATERIAL_COUNT;
+// The index of the material with this key or label (any case); 0 (default)
+// when there is none.
+uint8_t material_index(const std::string &name);
+
+// A temperature t (degrees C) that a source computed for emissivity e_source
+// with reflected temperature reflected, re-corrected for a surface of
+// emissivity e (grey body: radiance in proportion to the fourth power of the
+// absolute temperature). t unchanged when either emissivity or the reflected
+// temperature is unknown.
+float correct_emissivity(float t, float e_source, float e, float reflected);
+
+// The spot list as text for a text sensor: "x,y,material,color;..." with x
+// and y in percent (one decimal), the material's key and the colour index.
+std::string format_spots(const Spot *spots, uint8_t count);
+// How close to a spot a toggle removes it, as a fraction of the image
+// height: about the reach of an overlay's reticle (28 px of 480).
+static constexpr float SPOT_HIT_RADIUS = 0.06f;
+// Removes the spot nearest (fx, fy) if it is within SPOT_HIT_RADIUS, else adds
+// a spot of `material` there (when fewer than MAX_SPOTS) with the lowest
+// colour no other spot has. `aspect` is the image's width over its height.
+// Returns whether the list changed.
+bool toggle_spot(Spot *spots, uint8_t &count, float fx, float fy, float aspect, uint8_t material);
+// The lowest colour none of `spots` has (MAX_SPOTS when all are taken).
+uint8_t free_spot_color(const Spot *spots, uint8_t count);
+// The output pixel at (fx, fy) of an out_w x out_h image.
+Point spot_point(uint16_t out_w, uint16_t out_h, float fx, float fy);
+// The input value shown at (fx, fy) of the output image under `o`: the input
+// interpolated bilinearly between the four nearest pixel centres, as the
+// image is upscaled.
+float spot_value(const float *in, uint16_t in_w, uint16_t in_h, const Options &o, float fx, float fy);
 
 class CpuIsp {
  public:

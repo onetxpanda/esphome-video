@@ -3,9 +3,12 @@ palette, mirroring, upscaling and output pixel format. Output is an image
 source (for an overlay, encoder or camera)."""
 
 import esphome.codegen as cg
+from esphome.components import text_sensor
 from esphome.components.esp32 import get_esp32_variant, include_builtin_idf_component
 from esphome.components.esp32.const import VARIANT_ESP32P4
 from esphome.components.video_controls import (
+    button_control,
+    new_button_control,
     new_number_control,
     new_select_control,
     new_switch_control,
@@ -23,12 +26,19 @@ from esphome.components.video_core import (
     inherit_device_id,
 )
 import esphome.config_validation as cv
-from esphome.const import CONF_FORMAT, CONF_ID, CONF_SOURCE, DEVICE_CLASS_TEMPERATURE, UNIT_CELSIUS
+from esphome.const import (
+    CONF_FORMAT,
+    CONF_ID,
+    CONF_SOURCE,
+    DEVICE_CLASS_TEMPERATURE,
+    UNIT_CELSIUS,
+)
+from esphome.helpers import fnv1_hash
 
 CODEOWNERS = ["@onetxpanda"]
 MULTI_CONF = True  # e.g. one chain per camera
 DEPENDENCIES = ["esp32"]
-AUTO_LOAD = ["video_core", "video_controls"]
+AUTO_LOAD = ["video_core", "video_controls", "text_sensor"]
 
 CONF_SCALE = "scale"
 CONF_PALETTE = "palette"
@@ -42,6 +52,8 @@ CONF_CONTROLS = "controls"
 CONF_LOG_TIMING = "log_timing"
 CONF_EQUALIZE = "equalize"
 CONF_DETAIL = "detail"
+CONF_CLEAR_SPOTS = "clear_spots"
+CONF_SPOTS = "spots"
 
 FORMATS = {"RGB565_LE": "RGB565_LE", "RGB565_BE": "RGB565_BE", "RGB888": "RGB888", "GRAY8": "GRAY8"}
 # Older names, kept working.
@@ -75,7 +87,7 @@ def _palette(value):
 
 
 CONFIG_SCHEMA = cv.All(
-    inherit_device_id("controls.*"),
+    inherit_device_id("controls.*", "spots"),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(Isp),
@@ -116,8 +128,14 @@ CONFIG_SCHEMA = cv.All(
                     cv.Optional(CONF_SCALER): select_control(),
                     cv.Optional(CONF_EQUALIZE): number_control(),
                     cv.Optional(CONF_DETAIL): number_control(),
+                    # Removes every spot (spots are placed with toggle_spot,
+                    # e.g. from an API action).
+                    cv.Optional(CONF_CLEAR_SPOTS): button_control(),
                 }
             ),
+            # Text sensor listing the spots ("x,y,material,color;..."), e.g.
+            # for a dashboard card that places them.
+            cv.Optional(CONF_SPOTS): text_sensor.text_sensor_schema(),
             cv.Optional(CONF_LOG_TIMING, default=False): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA),
@@ -169,3 +187,11 @@ async def to_code(config):
             c[CONF_SCALER], var, "set_scaler", SCALER_LABELS, SCALERS.index(config[CONF_SCALER]),
             convert="static_cast<esphome::isp::Scaler>(v)",
         )
+    if CONF_CLEAR_SPOTS in c:
+        await new_button_control(c[CONF_CLEAR_SPOTS], var, "clear_spots")
+
+    # Spots are kept across reboots, one record per ISP.
+    cg.add(var.set_spots_key(fnv1_hash(f"isp_spots_{config[CONF_ID].id}")))
+    if CONF_SPOTS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_SPOTS])
+        cg.add(var.set_spots_text_sensor(sens))

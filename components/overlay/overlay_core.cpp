@@ -8,6 +8,19 @@
 namespace esphome {
 namespace overlay {
 
+// Distinct from each other and from the white marks; each is drawn over a
+// black outline, so it shows on any palette.
+const Color SPOT_COLORS[SPOT_COLOR_COUNT] = {
+    {0, 255, 255},    // cyan
+    {0, 255, 0},      // green
+    {255, 0, 255},    // magenta
+    {60, 140, 255},   // blue
+    {255, 255, 0},    // yellow
+    {255, 140, 0},    // orange
+    {255, 105, 180},  // pink
+    {160, 100, 255},  // violet
+};
+
 Style style_for_height(int height) {
   // 640x480 reference: 8 px gap, 20 px ticks, 2 px lines, 3x glyphs, 4 px margin.
   Style s;
@@ -24,22 +37,27 @@ namespace {
 
 struct Canvas {
   const video::ImageFrame &img;
-  void set(int x, int y, bool white) const {
+  void set(int x, int y, const Color &c) const {
     if (x < 0 || y < 0 || x >= img.width || y >= img.height)
       return;
     uint8_t *p = img.buffer.data() + static_cast<size_t>(y) * img.stride + static_cast<size_t>(x) * video::bytes_per_pixel(img.format);
-    const uint8_t v = white ? 0xFF : 0x00;
+    const uint16_t v565 = static_cast<uint16_t>(((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3));
     switch (img.format) {
       case video::ImageFormat::RGB565_LE:
+        p[0] = static_cast<uint8_t>(v565);
+        p[1] = static_cast<uint8_t>(v565 >> 8);
+        break;
       case video::ImageFormat::RGB565_BE:
-        p[0] = v;
-        p[1] = v;
+        p[0] = static_cast<uint8_t>(v565 >> 8);
+        p[1] = static_cast<uint8_t>(v565);
         break;
       case video::ImageFormat::RGB888:
-        p[0] = p[1] = p[2] = v;
+        p[0] = c.r;
+        p[1] = c.g;
+        p[2] = c.b;
         break;
       case video::ImageFormat::GRAY8:
-        p[0] = v;
+        p[0] = static_cast<uint8_t>((77 * c.r + 150 * c.g + 29 * c.b + 128) >> 8);
         break;
     }
   }
@@ -132,19 +150,22 @@ std::vector<Rect> draw(const video::ImageFrame &img, const std::vector<Mark> &ma
     placed.push_back(Rect{best.first, best.second, best.first + tw, best.second + th});
   }
 
-  // Outline pass, then the marks in white.
+  // Outline pass, then the marks in their colours.
+  static constexpr Color BLACK{0, 0, 0};
   for (int pass = s.outline ? 0 : 1; pass < 2; pass++) {
-    const bool white = pass == 1;
+    const bool outline = pass == 0;
+    const Color *color = &BLACK;
     auto plot = [&](int x, int y) {
-      if (white) {
-        cv.set(x, y, true);
+      if (!outline) {
+        cv.set(x, y, *color);
       } else {
         for (int dy = -1; dy <= 1; dy++)
           for (int dx = -1; dx <= 1; dx++)
-            cv.set(x + dx, y + dy, false);
+            cv.set(x + dx, y + dy, BLACK);
       }
     };
     for (size_t i = 0; i < marks.size(); i++) {
+      color = &marks[i].color;
       reticle_shape(marks[i].x, marks[i].y, s, plot);
       text_shape(label_pos[i].first, label_pos[i].second, marks[i].label, s.glyph_scale, plot);
     }
@@ -162,23 +183,26 @@ const std::vector<MarkHold::Shown> &MarkHold::update(const video::Annotations &a
     if (k >= 32 || !(kinds & (1u << k)))
       continue;
     const int x = static_cast<int>(an.x), y = static_cast<int>(an.y);
-    if (k >= SLOTS || seen[k]) {
-      this->shown_.push_back(Shown{x, y, an.value, an.kind});  // no slot: as it comes
+    const bool spot = an.kind == video::AnnotationKind::SPOT;
+    const size_t slot = spot ? k + an.index : k;
+    if ((spot && an.index >= SPOT_SLOTS) || slot >= SLOTS || seen[slot]) {
+      this->shown_.push_back(Shown{x, y, an.value, an.kind, an.index});  // no slot: as it comes
       continue;
     }
-    seen[k] = true;
-    Slot &s = this->slots_[k];
-    // Position and value together, once per hold time (new: at once).
-    if (!s.valid || now_ms - s.since_ms >= hold_ms) {
+    seen[slot] = true;
+    Slot &s = this->slots_[slot];
+    // Position and value together, once per hold time (new: at once). A spot
+    // that moved was moved by the user: at once too.
+    if (!s.valid || now_ms - s.since_ms >= hold_ms || (spot && (x != s.x || y != s.y))) {
       s.valid = true;
       s.x = x;
       s.y = y;
       s.value = an.value;
       s.since_ms = now_ms;
     }
-    this->shown_.push_back(Shown{s.x, s.y, s.value, an.kind});
+    this->shown_.push_back(Shown{s.x, s.y, s.value, an.kind, an.index});
   }
-  // A kind missing from this frame starts afresh when it returns.
+  // A kind (or spot) missing from this frame starts afresh when it returns.
   for (size_t k = 0; k < SLOTS; k++) {
     if (!seen[k])
       this->slots_[k].valid = false;

@@ -1,6 +1,6 @@
 """Draws an image source's annotations (e.g. min/max/centre temperatures from
-a `radiometric` component, carried through the `isp`) as reticles with value
-labels. Draws into the frames in place: it must be its source's only
+a `radiometric` component, carried through the `isp`, and the `isp`'s spots)
+as reticles with value labels. Draws into the frames in place: it must be its source's only
 consumer; attach other consumers to the overlay instead."""
 
 import esphome.codegen as cg
@@ -24,7 +24,8 @@ CONF_ENABLED = "enabled"
 CONF_UNIT = "unit"
 CONF_CONTROLS = "controls"
 
-KINDS = ["min", "max", "center"]
+# Mark names in `marks` and the annotation kinds they draw.
+KINDS = {"min": "MIN", "max": "MAX", "center": "CENTER", "spots": "SPOT"}
 UNITS = ["C", "F"]
 UNIT_LABELS = ["°C", "°F"]
 
@@ -40,7 +41,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(Overlay),
             **DEVICE_ID_SCHEMA,
             cv.Required(CONF_SOURCE): cv.use_id(ImageSource),
-            cv.Optional(CONF_MARKS, default=KINDS): cv.ensure_list(cv.one_of(*KINDS, lower=True)),
+            cv.Optional(CONF_MARKS, default=list(KINDS)): cv.ensure_list(cv.one_of(*KINDS, lower=True)),
             # How often a mark's position and value are refreshed (together).
             cv.Optional(CONF_HOLD, default="1s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_ENABLED, default=True): cv.boolean,
@@ -62,7 +63,7 @@ async def to_code(config):
     source = await cg.get_variable(config[CONF_SOURCE])
     cg.add(source.add_image_sink(var))
     for k in dict.fromkeys(config[CONF_MARKS]):
-        cg.add(var.add_kind(AnnotationKind.enum(k.upper())))
+        cg.add(var.add_kind(AnnotationKind.enum(KINDS[k])))
     cg.add(var.set_hold_ms(config[CONF_HOLD].total_milliseconds))
     cg.add(var.set_enabled(config[CONF_ENABLED]))
     unit = UNITS.index(config[CONF_UNIT])

@@ -206,6 +206,8 @@ void MLX90640::task_loop_() {
     f.height = SENSOR_ROWS;
     f.timestamp_ms = millis();
     f.sequence = ++this->sequence_;
+    f.emissivity = this->emissivity_;
+    f.reflected = ta - TA_SHIFT;
     this->sinks_.deliver(f, [](video::RadiometricSink *s, const video::RadiometricFrame &fr) {
       s->on_radiometric_frame(fr);
     });

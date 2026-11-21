@@ -15,6 +15,7 @@
 // frame for a consumer, and a slow consumer can never see its pixels change.
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -167,15 +168,17 @@ class FramePool {
 // A point of interest carried with a frame (e.g. the hottest pixel), with a
 // value in the frame's unit. x, y are pixel indices in the frame that carries
 // it; stages that change geometry move it with the pixels. Overlays draw
-// annotations; nothing else interprets them.
-enum class AnnotationKind : uint8_t { MIN = 0, MAX = 1, CENTER = 2, OTHER = 3 };
+// annotations; nothing else interprets them. SPOT is a point placed by the
+// user (an ISP's spots); `index` tells spots apart (the spot's colour).
+enum class AnnotationKind : uint8_t { MIN = 0, MAX = 1, CENTER = 2, OTHER = 3, SPOT = 4 };
 struct Annotation {
   float x{0}, y{0};
   float value{0};
   AnnotationKind kind{AnnotationKind::OTHER};
+  uint8_t index{0};  // which one of its kind (spots)
 };
 struct Annotations {
-  static constexpr uint8_t CAPACITY = 4;
+  static constexpr uint8_t CAPACITY = 12;  // min, max, centre and up to 8 spots
   Annotation items[CAPACITY];
   uint8_t count{0};
   bool add(const Annotation &a) {
@@ -203,6 +206,10 @@ struct RadiometricFrame {
   uint32_t sequence{0};
   Annotations annotations;
   FrameStats stats;  // of these exact pixels; a stage that changes them leaves it invalid
+  // What the source computed the temperatures with (NaN: unknown), so a
+  // stage can re-correct a point for a surface of another emissivity.
+  float emissivity{NAN};
+  float reflected{NAN};  // reflected (background) temperature, degrees C
   const float *temps() const { return reinterpret_cast<const float *>(this->buffer.data()); }
   float *temps() { return reinterpret_cast<float *>(this->buffer.data()); }
 };

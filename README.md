@@ -10,8 +10,8 @@ encoders; there is no software encoding.
 | `mlx90640` | MLX90640 32x24 thermal sensor. Radiometric source (temperatures). |
 | `hti301` | HTI-301 USB thermal camera, 384x288 at 25 fps. Radiometric source in radiometric mode; image source (the camera's own processed image) in processed mode. |
 | `radiometric` | Temperature processing: invalid-pixel repair, outlier filter, motion-adaptive temporal filter, edge-preserving smoothing, median filter, statistics sensors. |
-| `isp` | Radiometric frames to images: tone mapping onto a palette, mirroring, upscaling (CPU or the P4's PPA), output format. |
-| `overlay` | Draws a frame's annotations (e.g. min/max/centre markers with values) into the image. |
+| `isp` | Radiometric frames to images: tone mapping onto a palette, mirroring, upscaling (CPU or the P4's PPA), output format; spot meters placed at run time, each corrected for its material's emissivity. |
+| `overlay` | Draws a frame's annotations (min/max/centre markers and spots, with values) into the image. |
 | `h264_encoder` | ESP32-P4 hardware H.264 encoder, with a `select` platform to switch between sources. |
 | `rtsp_server` | Serves the encoder's output over RTSP (RTP over TCP). |
 | `matter` | Matter device support (from [esphome-matter](https://github.com/DavidvtWout/esphome-matter), Apache 2.0). |
@@ -133,6 +133,94 @@ as a `source:` directly. To switch between the two at runtime, give
 `h264_encoder` both as sources and use its select (see
 `tests/esphome/p4-hti301.yaml`).
 
+### Spot meters
+
+An `isp` can show up to 8 spots: reticles with the temperature under them,
+placed and removed while it runs and kept across reboots. Each spot's
+reticle and value are drawn in its own colour (cyan, green, magenta, blue,
+yellow, orange, pink, violet: the first free one when it is placed, kept
+while it exists). Each spot has a material, and its value is corrected for
+that material's emissivity. A Home Assistant dashboard card places them:
+click the image to add a spot, click a spot to remove it, and pick each
+spot's material in the list below the image, which shows each spot's
+colour.
+
+On the device, give the `isp` a `spots` text sensor and add these API actions
+(the card calls them by these names):
+
+```yaml
+isp:
+  - id: thermal_isp
+    # ...
+    spots:
+      name: "Thermal Spots"
+    controls:
+      clear_spots:
+        name: "Thermal Clear Spots"
+
+api:
+  actions:
+    - action: thermal_spot          # a click: removes the spot there, or adds one
+      variables: {x: float, y: float, material: string}
+      then:
+        - lambda: 'id(thermal_isp)->toggle_spot(x, y, material);'
+    - action: thermal_spot_material
+      variables: {spot: int, material: string}
+      then:
+        - lambda: 'id(thermal_isp)->set_spot_material(spot, material);'
+    - action: thermal_remove_spot
+      variables: {spot: int}
+      then:
+        - lambda: 'id(thermal_isp)->remove_spot(spot);'
+    - action: thermal_clear_spots
+      then:
+        - lambda: 'id(thermal_isp)->clear_spots();'
+```
+
+`x` and `y` are percent of the image as shown, from the top left; spots are
+numbered from 1 in the order placed. Materials (by key or label):
+
+| Key | Material | Emissivity |
+|---|---|---|
+| `default` | Default: as the source computed it | — |
+| `tortoise_shell` | Tortoise shell | 0.96 |
+| `skin` | Skin | 0.98 |
+| `black_plastic` | Black plastic | 0.95 |
+| `plastic` | Plastic | 0.92 |
+| `rubber` | Rubber | 0.95 |
+| `wood` | Wood | 0.90 |
+| `paper` | Paper, cardboard | 0.93 |
+| `fabric` | Fabric | 0.95 |
+| `water` | Water | 0.96 |
+| `glass` | Glass | 0.92 |
+| `ceramic` | Ceramic tile | 0.92 |
+| `concrete` | Concrete | 0.94 |
+| `brick` | Brick | 0.93 |
+| `soil` | Soil | 0.94 |
+| `sand` | Sand | 0.90 |
+| `plants` | Plants | 0.96 |
+| `paint` | Painted surface | 0.93 |
+| `anodized` | Aluminum, anodized | 0.77 |
+| `aluminum` | Aluminum, bare | 0.10 |
+| `stainless_steel` | Stainless steel | 0.16 |
+
+These are typical long-wave infrared values; a real surface varies with its
+finish and the viewing angle. Bare metals reflect most of what they see, so
+their readings follow the surroundings more than the metal.
+
+The card is `ha/thermal-spot-card.js`. Add it to Home Assistant as a
+dashboard resource (JavaScript module), then add a card:
+
+```yaml
+type: custom:thermal-spot-card
+camera: camera.esp32_p4_dev_kit_thermal_camera
+spots: sensor.esp32_p4_dev_kit_thermal_spots
+device: esp32_p4_devkit   # the ESPHome node name, - written as _
+```
+
+It shows the camera live (paused while the page is hidden) and remembers
+the material for new spots per browser.
+
 ### Matter camera
 
 `matter_camera` makes the device a Matter camera (device type 0x0142).
@@ -236,12 +324,14 @@ isp:
   `palette` (white_hot, black_hot, ironbow, lava, rainbow, iron_gray,
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear, bicubic), `scaler` (cpu, ppa), `equalize`
-  (percent; 0 = linear), `detail` (gain; 0 = off). Controls: `range_min`,
-  `range_max` (temperatures in °C, so Home Assistant shows them in its own
-  unit), `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`, `detail`.
-- **overlay**: `marks` (min, max, center), `hold` (how often a mark's
-  position and value are refreshed; default 1 s), `unit` (C, F),
-  `enabled`. Controls: `enabled`, `unit`.
+  (percent; 0 = linear), `detail` (gain; 0 = off), `spots` (text sensor
+  listing the spots as `x,y,material,colour;...`; see Spot meters). Controls:
+  `range_min`, `range_max` (temperatures in °C, so Home Assistant shows them
+  in its own unit), `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`,
+  `detail`, `clear_spots` (button).
+- **overlay**: `marks` (min, max, center, spots), `hold` (how often a mark's
+  position and value are refreshed; default 1 s; a spot that is moved moves
+  at once), `unit` (C, F), `enabled`. Controls: `enabled`, `unit`.
 - **h264_encoder**: `source` (list), `fps` (default: measured from the
   source), `gop` (default: one keyframe per second), `bitrate` (default:
   automatic), `qp_min`, `qp_max`. Select platform: switches the active source.
@@ -451,8 +541,23 @@ the PPA rejects the operation (an older chip revision), the ISP scales on
 the CPU from then on.
 Annotations are moved through the same mirroring and scaling as the pixels.
 
+Spots belong to the image as shown: a spot stays where it was placed when
+the image is mirrored, and measures whatever is shown there. Its value is the
+temperature at that point, interpolated between the four nearest sensor
+pixels as the image is, then corrected for the spot's material. Sources
+report the emissivity they computed temperatures with and the reflected
+(background) temperature they assumed: the MLX90640 its `emissivity` and its
+ambient temperature less 8 °C (Melexis' figure for open air), the HTI-301 its
+emissivity and reflected temperature. Taking a surface as a grey body,
+radiance in proportion to the fourth power of its absolute temperature, the
+source saw `e_s·T⁴ + (1 − e_s)·R⁴`; a surface of emissivity `e` giving that
+is at `To⁴ = (e_s·T⁴ + (e − e_s)·R⁴) / e`. A surface at the reflected
+temperature reads the same at any emissivity; one warmer than it is warmer
+still at a lower emissivity, one colder, colder still. A click within 6 % of
+the image height of a spot (about its reticle) removes it.
+
 `overlay` draws only its own pixels: a reticle and a label per annotation,
-white with a one-pixel black outline. Each label goes below, above, right or
+white (a spot: its colour) with a one-pixel black outline. Each label goes below, above, right or
 left of its reticle, taking the first position that is inside the image and
 clear of other labels and reticles. A mark's position and value are
 refreshed together once per `hold`, so neither the reticle nor its label
