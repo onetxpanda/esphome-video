@@ -34,11 +34,23 @@ class Overlay : public Component, public video::ImageSink, public video::ImageSo
 
   void add_kind(video::AnnotationKind k) { this->kinds_ |= 1u << static_cast<uint8_t>(k); }
   void set_hold_ms(uint32_t ms) { this->hold_ms_ = ms; }
-  // Thread-safe.
-  void set_enabled(bool v) { this->enabled_ = v; }
-  void set_unit(Unit u) { this->unit_ = static_cast<uint8_t>(u); }
+  void set_source(video::ImageSource *s) { this->source_ = s; }
+  // Thread-safe; shown at once (the source draws its last image again).
+  void set_enabled(bool v) {
+    this->enabled_ = v;
+    this->refresh_source_();
+  }
+  void set_unit(Unit u) {
+    this->unit_ = static_cast<uint8_t>(u);
+    this->refresh_source_();
+  }
 
  protected:
+  void refresh_source_() {
+    if (this->source_ != nullptr)
+      this->source_->request_refresh();
+  }
+  video::ImageSource *source_{nullptr};
   video::SinkList<video::ImageSink> sinks_;
   uint32_t kinds_{0};
   uint32_t hold_ms_{1000};

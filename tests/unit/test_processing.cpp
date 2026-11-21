@@ -252,6 +252,43 @@ static void test_edge_smoothing() {
 // Equalization and detail: off gives exactly the linear map; equalization
 // is monotonic and spreads a crowded temperature band over more colours;
 // detail leaves flat areas alone and overshoots at an edge.
+// Equalization follows the scene over time, whatever the frame rate; a curve
+// taken at once (a frame drawn again after a change) needs no settling.
+static void test_curve_blend() {
+  CHECK(NEAR(isp::curve_blend_for(40), 0.234f, 0.01f));  // 25 frames/s: about a quarter per frame
+  CHECK(isp::curve_blend_for(4000) > 0.999f);           // a frame every 4 s: the new curve
+  CHECK(isp::curve_blend_for(0) == 0.0f);
+  CHECK(isp::curve_blend_for(62) > isp::curve_blend_for(40));
+
+  isp::Options o;
+  o.range_min = 15;
+  o.range_max = 40;
+  o.scale = 1;
+  o.format = video::ImageFormat::GRAY8;
+  o.equalize = 1.0f;
+  uint32_t seed = 5;
+  std::vector<float> a(N), b(N);
+  for (int i = 0; i < N; i++) {
+    a[i] = 20.0f + noise(seed, 0.5f);
+    b[i] = i % 2 ? 35.0f + noise(seed, 0.5f) : 20.0f + noise(seed, 0.5f);
+  }
+  isp::CpuIsp slow, fast, settled;
+  for (auto *c : {&slow, &fast, &settled})
+    c->set_palette(gray_palette());
+  // Settled on b: the reference.
+  o.curve_blend = 1.0f;
+  settled.tone_map(b.data(), W, H, o);
+  // Both start on a; then one frame of b, blended a quarter or all of it.
+  slow.tone_map(a.data(), W, H, o);
+  fast.tone_map(a.data(), W, H, o);
+  o.curve_blend = 0.25f;
+  slow.tone_map(b.data(), W, H, o);
+  o.curve_blend = 1.0f;
+  fast.tone_map(b.data(), W, H, o);
+  CHECK(std::equal(fast.indices(), fast.indices() + N, settled.indices()));
+  CHECK(!std::equal(slow.indices(), slow.indices() + N, settled.indices()));
+}
+
 static void test_tone_curve() {
   isp::Options o;
   o.range_min = 15;
@@ -826,6 +863,7 @@ int main() {
   test_isp();
   test_temporal_filter();
   test_edge_smoothing();
+  test_curve_blend();
   test_tone_curve();
   test_bicubic();
   test_large_frames();

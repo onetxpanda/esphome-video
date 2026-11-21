@@ -43,7 +43,15 @@ struct Options {
   video::ImageFormat format{video::ImageFormat::RGB565_LE};
   float equalize{0.0f};  // 0 = linear .. 1 = fully histogram-equalized
   float detail{0.0f};    // detail gain; 0 = off
+  // How much of a frame's equalization curve replaces the previous one
+  // (0..1; 1: at once). Smoothing keeps the colours from flickering.
+  float curve_blend{0.25f};
 };
+
+// The curve_blend for a frame that came `interval_ms` after the previous one:
+// the curve follows the scene with a time constant of 150 ms, whatever the
+// frame rate (a quarter per frame at 25 frames/s, all of it at 1 frame/s).
+float curve_blend_for(uint32_t interval_ms);
 
 // Whether tone mapping is the plain linear map (no equalization, no detail).
 inline bool linear_tone(const Options &o) { return !(o.equalize > 0.0f) && !(o.detail > 0.0f); }

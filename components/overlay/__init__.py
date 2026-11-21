@@ -62,6 +62,7 @@ async def to_code(config):
     await cg.register_component(var, config)
     source = await cg.get_variable(config[CONF_SOURCE])
     cg.add(source.add_image_sink(var))
+    cg.add(var.set_source(source))
     for k in dict.fromkeys(config[CONF_MARKS]):
         cg.add(var.add_kind(AnnotationKind.enum(KINDS[k])))
     cg.add(var.set_hold_ms(config[CONF_HOLD].total_milliseconds))

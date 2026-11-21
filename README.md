@@ -514,8 +514,10 @@ in-range values over 64 bins, each bin capped at three times the average
 and show its noise), summed into a curve that gives each band of
 temperatures colours in proportion to how much of the scene it covers.
 `equalize` is the percentage of that curve mixed into the linear one. Each
-frame's curve is blended into the previous one (a quarter per frame), so
-the colours do not flicker with noise. With `detail` above 0, the frame is
+frame's curve is blended into the previous one with a time constant of
+150 ms (about a quarter per frame at 25 frames/s, all of it at one frame a
+second or slower), so the colours do not flicker with noise and follow the
+scene equally fast at any frame rate. With `detail` above 0, the frame is
 also smoothed with a 3x3 kernel, and each pixel's difference from the
 smoothed frame is multiplied by 1 + `detail` after mapping. Flat areas are
 unchanged; edges and small features gain contrast, with a slight bright and
@@ -540,6 +542,12 @@ bilinearly, so with `upscale: nearest` the CPU scales, which only copies. If
 the PPA rejects the operation (an older chip revision), the ISP scales on
 the CPU from then on.
 Annotations are moved through the same mirroring and scaling as the pixels.
+
+The ISP keeps the last frame it drew. When one of its options, the palette,
+a spot or a downstream overlay's options change, it draws that frame again
+at once, so a change shows without waiting for the next frame, however
+slow the sensor's frame rate. Options of the sensor and of `radiometric`
+still apply from the next frame.
 
 Spots belong to the image as shown: a spot stays where it was placed when
 the image is mirrored, and measures whatever is shown there. Its value is the

@@ -259,6 +259,10 @@ class ImageSource {
  public:
   virtual ~ImageSource() = default;
   virtual void add_image_sink(ImageSink *sink) = 0;
+  // Asks for the last image again, drawn anew, without waiting for the next
+  // frame (e.g. after a downstream overlay's options changed). Thread-safe;
+  // sources that cannot do this ignore it.
+  virtual void request_refresh() {}
 };
 
 // False-colour palettes, in one order for every stage that colours images

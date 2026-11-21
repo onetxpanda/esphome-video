@@ -47,6 +47,10 @@ class Isp : public Component,
   bool wants_frames() const override { return this->sinks_.any_wants(); }
   // ImageSource
   void add_image_sink(video::ImageSink *sink) override { this->sinks_.add(sink); }
+  // Draws the last frame again at once (thread-safe). Every option change
+  // does this too, so a change shows without waiting for the next frame,
+  // however slow the sensor's frame rate.
+  void request_refresh() override;
 
   // Configuration (before setup)
   void set_scale(uint8_t s) { this->opt_.scale = s; }
@@ -55,6 +59,7 @@ class Isp : public Component,
   // PaletteTarget (main loop): applied by the ISP task from the next frame.
   void set_palette_index(uint8_t index) override {
     this->palette_ = index < PALETTE_COUNT ? index : static_cast<uint8_t>(Palette::IRONBOW);
+    this->request_refresh();
   }
   void set_log_timing(bool v) { this->log_timing_ = v; }
 
@@ -90,10 +95,11 @@ class Isp : public Component,
   static void task_entry_(void *arg);
   void task_loop_();
   void process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler, const Spot *spots,
-                uint8_t spot_count);
+                uint8_t spot_count, bool refresh);
+  void wake_();  // the ISP task
   bool render_ppa_(const Options &o, video::ImageFrame &out);
 
-  std::mutex mutex_;  // guards opt_, scaler_, spots_ and pending_
+  std::mutex mutex_;  // guards opt_, scaler_, spots_, pending_, last_ and refresh_
   Options opt_;
   Scaler scaler_{Scaler::CPU};
   std::array<Spot, MAX_SPOTS> spots_{};
@@ -113,6 +119,10 @@ class Isp : public Component,
   uint8_t palette_applied_{0xFF};  // ISP task only
   video::RadiometricFrame pending_;
   bool has_pending_{false};
+  video::RadiometricFrame last_;  // the last frame drawn, to draw again on a change
+  bool refresh_{false};           // draw last_ again
+  uint32_t last_ts_{0};           // ISP task: the last new frame's time, for curve_blend
+  bool have_last_ts_{false};
 
   CpuIsp cpu_;
   video::SinkList<video::ImageSink> sinks_;

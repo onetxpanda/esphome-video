@@ -113,34 +113,63 @@ void Isp::dump_config() {
 void Isp::set_range_min(float v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.range_min = v;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_range_max(float v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.range_max = v;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_mirror_x(bool v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.mirror_x = v;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_mirror_y(bool v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.mirror_y = v;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_upscale(Upscale u) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.upscale = u;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_scaler(Scaler s) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->scaler_ = s;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_equalize(float percent) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.equalize = std::min(std::max(percent, 0.0f), 100.0f) / 100.0f;
+  this->refresh_ = true;
+  this->wake_();
 }
 void Isp::set_detail(float gain) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.detail = std::max(gain, 0.0f);
+  this->refresh_ = true;
+  this->wake_();
+}
+
+void Isp::wake_() {
+  if (this->task_ != nullptr)
+    xTaskNotifyGive(this->task_);
+}
+
+void Isp::request_refresh() {
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->refresh_ = true;
+  }
+  this->wake_();
 }
 
 void Isp::toggle_spot(float x_percent, float y_percent, const std::string &material) {
@@ -202,6 +231,7 @@ void Isp::spots_changed_() {
   if (this->spots_sensor_ != nullptr)
     this->spots_sensor_->publish_state(format_spots(st.spots, st.count));
 #endif
+  this->request_refresh();
 }
 
 void Isp::on_radiometric_frame(const video::RadiometricFrame &frame) {
@@ -227,13 +257,24 @@ void Isp::task_loop_() {
     Scaler scaler;
     std::array<Spot, MAX_SPOTS> spots;
     uint8_t spot_count;
+    bool refresh = false;
     {
       std::lock_guard<std::mutex> lock(this->mutex_);
-      if (!this->has_pending_)
+      if (this->has_pending_) {
+        f = std::move(this->pending_);
+        this->pending_ = video::RadiometricFrame();
+        this->has_pending_ = false;
+        // Kept (the same buffer, so nothing more is held) to draw again when
+        // an option changes before the next frame.
+        this->last_ = f;
+      } else if (this->refresh_ && this->last_.buffer) {
+        f = this->last_;
+        refresh = true;
+      } else {
+        this->refresh_ = false;
         continue;
-      f = std::move(this->pending_);
-      this->pending_ = video::RadiometricFrame();
-      this->has_pending_ = false;
+      }
+      this->refresh_ = false;  // a new frame shows the changes too
       o = this->opt_;
       scaler = this->scaler_;
       spots = this->spots_;
@@ -246,12 +287,21 @@ void Isp::task_loop_() {
       this->cpu_.set_palette(make_palette(static_cast<Palette>(palette)));
       this->palette_applied_ = palette;
     }
-    this->process_(f, o, scaler, spots.data(), spot_count);
+    // Equalization follows the scene over time, not frames; drawn again after
+    // a change, a frame takes its curve at once.
+    if (refresh) {
+      o.curve_blend = 1.0f;
+    } else {
+      o.curve_blend = this->have_last_ts_ ? curve_blend_for(f.timestamp_ms - this->last_ts_) : 1.0f;
+      this->last_ts_ = f.timestamp_ms;
+      this->have_last_ts_ = true;
+    }
+    this->process_(f, o, scaler, spots.data(), spot_count, refresh);
   }
 }
 
 void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler, const Spot *spots,
-                   uint8_t spot_count) {
+                   uint8_t spot_count, bool refresh) {
   const int s = o.scale < 1 ? 1 : o.scale;
   // Unscaled linear output is tone-mapped straight into the output frame,
   // below; everything else goes through the index image.
@@ -274,7 +324,8 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   out.height = in.height * s;
   out.format = o.format;
   out.stride = out.width * video::bytes_per_pixel(o.format);
-  out.timestamp_ms = in.timestamp_ms;
+  // Drawn again after a change: now, so encoders see time move on.
+  out.timestamp_ms = refresh ? millis() : in.timestamp_ms;
   out.sequence = in.sequence;
   const size_t bytes = out.length();
   if (this->pool_ == nullptr || this->pool_size_ < bytes) {

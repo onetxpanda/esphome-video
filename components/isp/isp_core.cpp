@@ -254,9 +254,14 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
 // into colour), then its cumulative sum as the curve. `equalize` mixes it
 // with the linear curve. Successive curves are blended (a quarter of the new
 // one per frame) so the colours do not flicker with noise.
+float curve_blend_for(uint32_t interval_ms) {
+  constexpr float TIME_CONSTANT_MS = 150.0f;
+  return 1.0f - std::exp(-static_cast<float>(interval_ms) / TIME_CONSTANT_MS);
+}
+
 void CpuIsp::update_curve_(const float *in, size_t n, const Options &o) {
   constexpr float PLATEAU = 3.0f;
-  constexpr float BLEND = 0.25f;
+  const float blend = std::fmin(std::fmax(o.curve_blend, 0.0f), 1.0f);  // NaN: 0
   const float lo = o.range_min, hi = o.range_max;
   const float kb = static_cast<float>(CURVE_BINS) / std::max(hi - lo, 1e-3f);
   std::array<float, CURVE_BINS + 1> next;
@@ -286,7 +291,7 @@ void CpuIsp::update_curve_(const float *in, size_t n, const Options &o) {
   }
   if (this->curve_valid_ && this->curve_lo_ == lo && this->curve_hi_ == hi) {
     for (int i = 0; i <= CURVE_BINS; i++)
-      this->curve_[i] += BLEND * (next[i] - this->curve_[i]);
+      this->curve_[i] += blend * (next[i] - this->curve_[i]);
   } else {
     this->curve_ = next;
     this->curve_valid_ = true;
