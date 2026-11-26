@@ -477,9 +477,9 @@ isp:
   position and value are refreshed; default 1 s; a spot that is moved moves
   at once), `unit` (C, F), `enabled`. Controls: `enabled`, `unit`.
 - **h264_encoder**: `source` (list), `fps` (default: measured from the
-  source), `min_fps` (default 5; 0 = off), `gop` (default: one keyframe per
-  second), `bitrate` (default: automatic), `qp_min`, `qp_max`. Select
-  platform: switches the active source.
+  source), `min_fps` (default 5; 0 = off), `always_on` (default false),
+  `gop` (default: one keyframe per second), `bitrate` (default: automatic),
+  `qp_min`, `qp_max`. Select platform: switches the active source.
 - **rtsp_server**: `port`, `path`, `session_name`, `max_clients`, `buffer_size`.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
@@ -556,6 +556,12 @@ and drops frames instead of stopping the device.
   stream worker need several frames before they start). The stream then
   declares `min_fps`. Repeats stop 10 s after the source's last frame, so a
   source that stops shows as a stopped stream.
+- Without `always_on`, the encoder and its source rest while nobody watches,
+  and a new viewer waits for the source's next frame (up to 4 s for an
+  MLX90640 at 0.5 Hz). With `always_on: true` the encoder keeps running, and
+  a new viewer gets a keyframe with the next frame (1/`min_fps` s at most).
+  On an ESP32-P4 this costs about 1% of a core for the encoder plus the
+  source's own processing.
 - `rtsp_server` sends each client whole frames only. When a client's backlog
   would exceed `buffer_size`, its frames are dropped until the next keyframe.
   It asks the encoder for that keyframe once, when the client's backlog has

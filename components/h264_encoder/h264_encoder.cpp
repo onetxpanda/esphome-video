@@ -90,6 +90,8 @@ void H264Encoder::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  Keyframe every second");
   }
+  if (this->always_on_)
+    ESP_LOGCONFIG(TAG, "  Always on: encodes with no viewer, so a new one gets a picture at once");
   if (this->repeat_.enabled()) {
     ESP_LOGCONFIG(TAG, "  Minimum frame rate: %u fps (a slower source's last frame is repeated)",
                   this->repeat_.min_fps);
@@ -133,6 +135,8 @@ void SourceInput::on_source_change() { this->encoder_->source_changed(this->inde
 bool H264Encoder::consumers_want_frames_() const {
   if (this->is_failed())
     return false;
+  if (this->always_on_)
+    return true;
   for (auto *s : this->sinks_) {
     if (s->wants_frames())
       return true;

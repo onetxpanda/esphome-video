@@ -156,6 +156,8 @@ video_test_pattern:
 h264_encoder:
   id: thermal_h264
   source: [thermal_overlay, test_pattern]
+  min_fps: 25
+  always_on: true
 
 select:
   - platform: h264_encoder

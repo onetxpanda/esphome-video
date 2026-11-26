@@ -41,7 +41,8 @@ class SourceInput : public video::ImageSink {
 // multiple of 16, packed rows) is encoded from the source's buffer, held
 // until the hardware is done; other frames are converted into a DMA buffer.
 // One frame is in flight at a time; frames arriving meanwhile are dropped.
-// Nothing is encoded while no EncodedFrameSink wants frames. A source slower
+// Nothing is encoded while no EncodedFrameSink wants frames, unless always_on
+// is set. A source slower
 // than min_fps has its frames copied, and the last one is encoded again to
 // keep the stream at min_fps (see RepeatPolicy).
 class H264Encoder : public Component {
@@ -58,6 +59,8 @@ class H264Encoder : public Component {
   void set_bitrate(uint32_t bitrate) { this->bitrate_ = bitrate; }
   // 0 = no repeats: the stream runs at the source's rate however slow.
   void set_min_fps(uint8_t min_fps) { this->repeat_.min_fps = min_fps; }
+  // Encode even while no EncodedFrameSink wants frames.
+  void set_always_on(bool always_on) { this->always_on_ = always_on; }
   void set_qp(uint8_t qp_min, uint8_t qp_max) {
     this->qp_min_ = qp_min;
     this->qp_max_ = qp_max;
@@ -109,6 +112,7 @@ class H264Encoder : public Component {
   uint8_t qp_min_{20};
   uint8_t qp_max_{40};
   RepeatPolicy repeat_;
+  bool always_on_{false};
 
   std::vector<EncodedFrameSink *> sinks_;
   std::vector<const char *> source_names_;

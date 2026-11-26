@@ -26,6 +26,7 @@ CONF_BITRATE = "bitrate"
 CONF_QP_MIN = "qp_min"
 CONF_QP_MAX = "qp_max"
 CONF_MIN_FPS = "min_fps"
+CONF_ALWAYS_ON = "always_on"
 
 h264_encoder_ns = cg.esphome_ns.namespace("h264_encoder")
 H264Encoder = h264_encoder_ns.class_("H264Encoder", cg.Component)
@@ -60,6 +61,11 @@ CONFIG_SCHEMA = cv.All(
             # the stream never drops below this rate (players need several
             # frames before they start). 0 = the source's rate, however slow.
             cv.Optional(CONF_MIN_FPS, default=5): cv.int_range(min=0, max=30),
+            # Encode even while no consumer is watching, so a new viewer gets
+            # a picture at once instead of waiting for the source's next
+            # frame (seconds, for a slow thermal sensor). Costs the encoder's
+            # and the source's processing all the time.
+            cv.Optional(CONF_ALWAYS_ON, default=False): cv.boolean,
             # Target bitrate in bit/s. Default: automatic from frame size and fps.
             cv.Optional(CONF_BITRATE): cv.int_range(min=16000, max=40_000_000),
             cv.Optional(CONF_QP_MIN, default=20): cv.int_range(min=0, max=51),
@@ -79,6 +85,7 @@ async def to_code(config):
     cg.add(var.set_gop(config.get(CONF_GOP, 0)))
     cg.add(var.set_bitrate(config.get(CONF_BITRATE, 0)))
     cg.add(var.set_min_fps(config[CONF_MIN_FPS]))
+    cg.add(var.set_always_on(config[CONF_ALWAYS_ON]))
     cg.add(var.set_qp(config[CONF_QP_MIN], config[CONF_QP_MAX]))
 
     # Each source gets its own input, so the encoder knows which is active.
