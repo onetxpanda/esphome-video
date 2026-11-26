@@ -1,0 +1,89 @@
+# Compile test: a Seek Compact Pro USB thermal camera on an ESP32-P4.
+#   seek_compact_pro -> radiometric -> isp -> overlay -> h264_encoder -> rtsp_server
+#                                                     \-> video_camera
+esphome:
+  name: p4-seek
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, seek_compact_pro, radiometric, isp, overlay, video_camera, h264_encoder, rtsp_server]
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+usb_host:
+  enable_hubs: true
+
+seek_compact_pro:
+  id: seek
+  gain: 1.0
+  offset: 0.0
+  log_timing: true
+  # This camera's column 108 flickers (about 7x the noise of the others).
+  bad_columns: [108]
+  controls:
+    gain:
+      name: "Seek Gain"
+    offset:
+      name: "Seek Offset"
+    shutter:
+      name: "Seek Shutter"
+  streaming:
+    name: "Seek Streaming"
+  status:
+    name: "Seek Status"
+
+radiometric:
+  - id: seek_rad
+    source: seek
+    outlier_level: 0
+    min:
+      name: "Seek Min Temperature"
+    max:
+      name: "Seek Max Temperature"
+
+isp:
+  - id: seek_isp
+    source: seek_rad
+    scale: 2
+    range_min: 15
+    range_max: 40
+
+overlay:
+  - id: seek_overlay
+    source: seek_isp
+    unit: F
+
+video_camera:
+  name: "Seek Camera"
+  source: seek_overlay
+
+h264_encoder:
+  id: seek_h264
+  source: seek_overlay
+
+rtsp_server:
+  encoder: seek_h264

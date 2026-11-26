@@ -81,6 +81,10 @@ PIPELINE_TESTS = [
     ("test_assembler", ["unit/test_assembler.cpp", "mlx90640/subpage_assembler.cpp"], ["mlx90640"]),
     ("test_hti301", ["unit/test_hti301.cpp", "hti301/hti301_core.cpp", "video_core/frame.cpp"],
      ["video_core", "hti301"]),
+    ("test_seek", ["unit/test_seek.cpp", "seek_compact_pro/seek_core.cpp", "video_core/frame.cpp"],
+     ["video_core", "seek_compact_pro"]),
+    ("test_thermal_master", ["unit/test_thermal_master.cpp", "thermal_master_p1/tm_core.cpp"],
+     ["video_core", "thermal_master_p1"]),
 ]
 
 

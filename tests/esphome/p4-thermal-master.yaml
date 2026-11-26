@@ -1,0 +1,354 @@
+# Compile test: a Thermal Master P1 USB thermal camera on an ESP32-P4, with
+# every setting, reading and maintenance command it has as an entity.
+#   thermal_master_p1 -> radiometric -> isp -> overlay -> h264_encoder -> rtsp_server
+#   thermal_master_p1 (the camera's own picture) -> video_camera
+esphome:
+  name: p4-thermal-master
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, thermal_master_p1, radiometric, isp, overlay, video_camera, h264_encoder, rtsp_server]
+
+logger:
+api:
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+usb_host:
+  enable_hubs: true
+
+thermal_master_p1:
+  id: p1
+  log_timing: true
+  update_interval: 30s
+  heartbeat_interval: 2s
+  camera_point:
+    x: 80
+    y: 60
+  settings:
+    range: auto
+    mirror_flip: none
+    emissivity: 0.95
+    ambient: 25
+    isothermal_limit:
+      low: -20
+      high: 120
+    sun_detect_pixel_ratio:
+      min: 5
+      max: 50
+  controls:
+    gain:
+      name: "P1 Gain"
+    offset:
+      name: "P1 Offset"
+    shutter:
+      name: "P1 Shutter"
+    shutter_ooc:
+      name: "P1 Shutter OOC"
+    shutter_both:
+      name: "P1 Shutter Both"
+    ffc_update:
+      name: "P1 FFC Update"
+    ffc_without_shutter:
+      name: "P1 FFC Without Shutter"
+    range:
+      name: "P1 Range"
+    palette:
+      name: "P1 Palette"
+    brightness:
+      name: "P1 Brightness"
+    contrast:
+      name: "P1 Contrast"
+    global_contrast:
+      name: "P1 Global Contrast"
+    detail_enhance:
+      name: "P1 Detail Enhance"
+    noise_reduction:
+      name: "P1 Noise Reduction"
+    spatial_noise_reduction:
+      name: "P1 Spatial Noise Reduction"
+    temporal_noise_reduction:
+      name: "P1 Temporal Noise Reduction"
+    gamma:
+      name: "P1 Gamma"
+    edge_enhance:
+      name: "P1 Edge Enhance"
+    roi_level:
+      name: "P1 ROI Level"
+    profession_mode:
+      name: "P1 Profession Mode"
+    mirror_flip:
+      name: "P1 Mirror Flip"
+    isothermal_mode:
+      name: "P1 Isothermal Mode"
+    isothermal_limit_low:
+      name: "P1 Isothermal Limit Low"
+    isothermal_limit_high:
+      name: "P1 Isothermal Limit High"
+    isothermal:
+      name: "P1 Isothermal"
+    sun_detect:
+      name: "P1 Sun Detect"
+    sun_detect_pixel_ratio_min:
+      name: "P1 Sun Detect Pixel Ratio Min"
+    sun_detect_pixel_ratio_max:
+      name: "P1 Sun Detect Pixel Ratio Max"
+    sun_detect_roundness_min:
+      name: "P1 Sun Detect Roundness Min"
+    sun_detect_roundness_max:
+      name: "P1 Sun Detect Roundness Max"
+    overexposure_protection:
+      name: "P1 Overexposure Protection"
+    auto_shutter:
+      name: "P1 Auto Shutter"
+    auto_shutter_threshold:
+      name: "P1 Auto Shutter Threshold"
+    auto_shutter_min_interval:
+      name: "P1 Auto Shutter Min Interval"
+    auto_shutter_max_interval:
+      name: "P1 Auto Shutter Max Interval"
+    shutter_open:
+      name: "P1 Shutter Open"
+    env_correction:
+      name: "P1 Env Correction"
+    emissivity:
+      name: "P1 Emissivity"
+    ambient:
+      name: "P1 Ambient"
+    reflected:
+      name: "P1 Reflected"
+    transmittance:
+      name: "P1 Transmittance"
+    stream_mid_mode:
+      name: "P1 Stream Mid Mode"
+    palette_switch:
+      name: "P1 Palette Switch"
+    frame_temp_display:
+      name: "P1 Frame Temp Display"
+  maintenance:
+    reboot:
+      name: "P1 Reboot"
+    save_settings:
+      name: "P1 Save Settings"
+    restore_settings:
+      name: "P1 Restore Settings"
+    reset_to_rom:
+      name: "P1 Reset To Rom"
+    reset_to_bootloader:
+      name: "P1 Reset To Bootloader"
+    save_defaults:
+      name: "P1 Save Defaults"
+    restore_calibration:
+      name: "P1 Restore Calibration"
+    ooc_save:
+      name: "P1 OOC Save"
+    k_calibrate_low:
+      name: "P1 K Calibrate Low"
+    k_calibrate_high:
+      name: "P1 K Calibrate High"
+    k_calculate:
+      name: "P1 K Calculate"
+    k_cancel:
+      name: "P1 K Cancel"
+    k_clear:
+      name: "P1 K Clear"
+    k_save:
+      name: "P1 K Save"
+    k_restore:
+      name: "P1 K Restore"
+    dpc_auto:
+      name: "P1 DPC Auto"
+    dpc_cancel:
+      name: "P1 DPC Cancel"
+    dpc_clear:
+      name: "P1 DPC Clear"
+    dpc_save:
+      name: "P1 DPC Save"
+    dpc_restore:
+      name: "P1 DPC Restore"
+    rmcover_auto:
+      name: "P1 Rmcover Auto"
+    rmcover_cancel:
+      name: "P1 Rmcover Cancel"
+    rmcover_clear:
+      name: "P1 Rmcover Clear"
+    rmcover_save:
+      name: "P1 Rmcover Save"
+    rmcover_restore:
+      name: "P1 Rmcover Restore"
+    tpd1_cancel:
+      name: "P1 TPD1 Cancel"
+    tpd1_clear:
+      name: "P1 TPD1 Clear"
+    tpd1_save:
+      name: "P1 TPD1 Save"
+    tpd_restore:
+      name: "P1 TPD Restore"
+    tpd2_cancel:
+      name: "P1 TPD2 Cancel"
+    tpd2_clear:
+      name: "P1 TPD2 Clear"
+    tpd2_save:
+      name: "P1 TPD2 Save"
+    tpd2_restore:
+      name: "P1 TPD2 Restore"
+    crg_save:
+      name: "P1 CRG Save"
+    cursor_move:
+      name: "P1 Cursor Move"
+    dpc_mark:
+      name: "P1 DPC Mark"
+    dpc_unmark:
+      name: "P1 DPC Unmark"
+    tpd1_recalibrate:
+      name: "P1 TPD1 Recalibrate"
+    tpd2_point1:
+      name: "P1 TPD2 Point1"
+    tpd2_point2:
+      name: "P1 TPD2 Point2"
+    vl_read:
+      name: "P1 VL Read"
+    vl_write:
+      name: "P1 VL Write"
+    crg_write:
+      name: "P1 CRG Write"
+    cursor_x:
+      name: "P1 Cursor X"
+    cursor_y:
+      name: "P1 Cursor Y"
+    tpd_reference:
+      name: "P1 TPD Reference"
+    vl_register:
+      name: "P1 VL Register"
+    vl_value:
+      name: "P1 VL Value"
+    crg_new_value:
+      name: "P1 CRG New Value"
+    cursor:
+      name: "P1 Cursor"
+    nuc_bypass:
+      name: "P1 NUC Bypass"
+    vl_result:
+      name: "P1 VL Result"
+  streaming:
+    name: "P1 Streaming"
+  status:
+    name: "P1 Status"
+  sun_detected:
+    name: "P1 Sun Detected"
+  shutter_countdown:
+    name: "P1 Shutter Countdown"
+  camera_max_temperature:
+    name: "P1 Camera Max Temperature"
+  camera_min_temperature:
+    name: "P1 Camera Min Temperature"
+  device_temperature:
+    name: "P1 Device Temperature"
+  powered_time:
+    name: "P1 Powered Time"
+  crg_value:
+    name: "P1 CRG Value"
+  sensor_vtemp:
+    name: "P1 Sensor Vtemp"
+  camera_point_temperature:
+    name: "P1 Camera Point Temperature"
+  device_status:
+    name: "P1 Device Status"
+  shutter_status:
+    name: "P1 Shutter Status"
+  stream_source:
+    name: "P1 Stream Source"
+  digital_video_output:
+    name: "P1 Digital Video Output"
+  system_data_flag:
+    name: "P1 System Data Flag"
+  cursor_position:
+    name: "P1 Cursor Position"
+  model:
+    name: "P1 Model"
+  firmware:
+    name: "P1 Firmware"
+  customer_id:
+    name: "P1 Customer ID"
+  vendor_id:
+    name: "P1 Vendor ID"
+  product_id:
+    name: "P1 Product ID"
+  part_number:
+    name: "P1 Part Number"
+  serial:
+    name: "P1 Serial"
+  isp_version:
+    name: "P1 ISP Version"
+  abstract_version:
+    name: "P1 Abstract Version"
+  system_version:
+    name: "P1 System Version"
+  calibration_version:
+    name: "P1 Calibration Version"
+  data_version:
+    name: "P1 Data Version"
+  package_version:
+    name: "P1 Package Version"
+  sensor_type:
+    name: "P1 Sensor Type"
+  sensor_id:
+    name: "P1 Sensor ID"
+  palettes:
+    name: "P1 Palettes"
+  range_in_use:
+    name: "P1 Range In Use"
+
+radiometric:
+  - id: p1_rad
+    source: p1
+    outlier_level: 0
+    min:
+      name: "P1 Min Temperature"
+    max:
+      name: "P1 Max Temperature"
+
+isp:
+  - id: p1_isp
+    source: p1_rad
+    scale: 4
+    range_min: 15
+    range_max: 40
+
+overlay:
+  - id: p1_overlay
+    source: p1_isp
+    unit: F
+
+# The camera's own picture.
+video_camera:
+  name: "P1 Picture"
+  source: p1
+
+h264_encoder:
+  id: p1_h264
+  source: p1_overlay
+
+rtsp_server:
+  encoder: p1_h264

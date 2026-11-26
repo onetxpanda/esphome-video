@@ -8,6 +8,8 @@ encoders; there is no software encoding.
 | Component | Role |
 |---|---|
 | `mlx90640` | MLX90640 32x24 thermal sensor. Radiometric source (temperatures). |
+| `seek_compact_pro` | Seek Thermal Compact Pro USB thermal camera (Android model, Fast Frame too), 320x240. Radiometric source: temperatures from the camera's own calibration, processed as Seek's app does, correctable. |
+| `thermal_master_p1` | Thermal Master P1 USB thermal camera, 160x120 at 25 fps. Radiometric source (the camera's own temperatures, correctable; both ranges, and the vendor app's automatic switching) and image source (the camera's own processed picture); its command set, as the vendor app's library has it, as entities. |
 | `hti301` | HTI-301 USB thermal camera, 384x288 at 25 fps. Radiometric source in radiometric mode; image source (the camera's own processed image) in processed mode. |
 | `radiometric` | Temperature processing: invalid-pixel repair, outlier filter, motion-adaptive temporal filter, edge-preserving smoothing, median filter, statistics sensors. |
 | `isp` | Radiometric frames to images: tone mapping onto a palette, mirroring, upscaling (CPU or the P4's PPA), output format; spot meters placed at run time, each corrected for its material's emissivity. |
@@ -132,6 +134,86 @@ mode it produces images itself, so an encoder or `video_camera` can take it
 as a `source:` directly. To switch between the two at runtime, give
 `h264_encoder` both as sources and use its select (see
 `tests/esphome/p4-hti301.yaml`).
+
+### Seek Compact Pro
+
+The Android Compact Pro (USB-C or micro-USB; the iPhone model's Lightning
+connector cannot work) connects to the P4's USB 2.0 high-speed port and
+needs ESPHome's `usb_host`. In place of `mlx90640` and `i2c` above:
+
+```yaml
+usb_host:
+
+seek_compact_pro:
+  id: thermal_sensor
+  controls:
+    gain:
+      name: "Thermal Gain"
+    offset:
+      name: "Thermal Offset"
+    shutter:
+      name: "Thermal Shutter"
+  streaming:
+    name: "Thermal Streaming"
+```
+
+It feeds `radiometric` as the MLX90640 does; set `outlier_level: 0` there,
+since the camera's frames are already corrected. Its temperatures come from
+the camera's own calibration, as Seek's app computes them (see How it works);
+to match a reference, set `gain` and `offset`. Its picture is not mirrored:
+leave the `isp` without `mirror_x`.
+
+### Thermal Master P1
+
+The P1 (USB-C) connects to the P4's USB 2.0 high-speed port and needs
+ESPHome's `usb_host`. In place of `mlx90640` and `i2c` above:
+
+```yaml
+usb_host:
+
+thermal_master_p1:
+  id: thermal_sensor
+  controls:
+    gain:
+      name: "Thermal Gain"
+    offset:
+      name: "Thermal Offset"
+    shutter:
+      name: "Thermal Shutter"
+  streaming:
+    name: "Thermal Streaming"
+  status:
+    name: "Thermal Status"
+```
+
+It feeds `radiometric` as the MLX90640 does; set `outlier_level: 0` there,
+since the camera's frames are already corrected. The temperatures are the
+camera's own; to match a reference, set `gain` and `offset`. The camera has
+two ranges: high, -4 to 302 °F (the default), and low, 302 to 1112 °F. In
+the low range everything under 302 °F reads 302 °F, as the vendor app shows
+it. `settings: {range: auto}` (or the `range` select) switches between them
+the way the vendor app's "Auto" does. The camera does a shutter cycle by
+itself about every 90 s; the `shutter` button does one now. `scale: 4` on
+the `isp` gives 640x480.
+
+It is also an image source: the camera's own processed picture, which its
+palette, brightness, contrast, noise reduction and the other picture
+settings change. Give it to `video_camera` or an encoder as a `source:`.
+
+The camera's settings can be set at every start (`settings:`) and as
+entities (`controls:`). An entity shows what the camera reports after a
+change (read back where the camera has a read), and a change is kept for
+later starts. As the vendor app does at every start, auto shutter and sun
+detection are switched on unless `settings:` says otherwise. With sun
+detection on, `sun_detected` turns on when the camera flags the sun in view
+(the vendor app then closes the shutter: `shutter_open` does that here).
+Readings (`device_temperature`, `device_status`, `camera_max_temperature`
+and the others below) are polled every `update_interval`; the device
+information is read once a start. Commands that change or wipe what the
+camera keeps are entities only when listed under `maintenance:`. See
+`tests/esphome/p4-thermal-master.yaml` for every one. Not yet run on a
+camera: the commands are the vendor app's library's, and most of them the
+app itself never sends to a P1.
 
 ### Spot meters
 
@@ -295,6 +377,63 @@ isp:
 
 - **mlx90640**: `refresh_rate` (0.5Hz–64Hz), `frame_mode` (interpolate, merge),
   `emissivity`. Controls: `refresh_rate`, `frame_mode`.
+- **seek_compact_pro**: `gain` (default 1), `offset` (°C, default 0),
+  `transfers` (bulk transfers kept queued, default 3), `scene_filter` (Seek's
+  default picture filter, default on; see How it works), `bad_columns` (picture
+  columns, 0 at the left, filled from their neighbours like dead pixels: a
+  column that flickers; up to 8). Controls: `gain`,
+  `offset` (in °C: a difference, so Home Assistant does not convert it),
+  `shutter` (button). Sensors: `streaming`, `status`.
+- **thermal_master_p1**: `gain` (default 1), `offset` (°C, default 0),
+  `transfers` (bulk transfers kept queued, 8 KB of internal RAM each, default
+  4), `update_interval` (readings, default 60 s), `heartbeat_interval` (the
+  library's keepalive; off unless set: the vendor app sends none to a P1),
+  `camera_point` (`x`, `y`: the point `camera_point_temperature` reads; the
+  centre by default), `settings` (written at every start; the keys below, in
+  the entities' units: selects by option key, e.g. `range: auto`; pairs as
+  `isothermal_limit: {low: -20, high: 120}` and `sun_detect_pixel_ratio:
+  {min: 5, max: 50}`). Controls: `gain`, `offset` (in °C: a difference);
+  buttons `shutter` (the offset updated, as the vendor app's button does),
+  `shutter_ooc`, `shutter_both`, `ffc_update`, `ffc_without_shutter`; camera
+  settings `range` (high, low, auto), `palette` (the camera's palette index;
+  the names are the `palettes` text), `brightness`, `contrast`,
+  `global_contrast` (the vendor app's contrast), `detail_enhance`,
+  `noise_reduction`, `spatial_noise_reduction`, `temporal_noise_reduction`,
+  `gamma` (0-100), `edge_enhance` (off, level_1, level_2), `roi_level` (off,
+  third, half), `profession_mode` (no read), `mirror_flip` (none, mirror,
+  flip, both), `isothermal_mode` (0-5), `isothermal_limit_low`,
+  `isothermal_limit_high` (whole °C), `isothermal`, `sun_detect`,
+  `sun_detect_pixel_ratio_min`, `_max`, `sun_detect_roundness_min`, `_max`
+  (0-100), `overexposure_protection` (off, on, mode_2), `auto_shutter`,
+  `auto_shutter_threshold`, `auto_shutter_min_interval`,
+  `auto_shutter_max_interval` (units not given), `shutter_open`,
+  `env_correction`, `emissivity`, `transmittance` (0.001-1), `ambient`,
+  `reflected` (-40 to 100 °C, whole degrees), `stream_mid_mode` (picture,
+  tpd, lce, ir, snr), `palette_switch`, `frame_temp_display` (no read).
+  Maintenance: buttons `reboot`, `save_settings`, `restore_settings`,
+  `reset_to_rom`, `reset_to_bootloader`, `save_defaults`,
+  `restore_calibration`, `ooc_save`, `k_calibrate_low`, `k_calibrate_high`,
+  `k_calculate`, `k_cancel`, `k_clear`, `k_save`, `k_restore`, `dpc_auto`,
+  `dpc_cancel`, `dpc_clear`, `dpc_save`, `dpc_restore`, `rmcover_auto`,
+  `rmcover_cancel`, `rmcover_clear`, `rmcover_save`, `rmcover_restore`,
+  `tpd1_cancel`, `tpd1_clear`, `tpd1_save`, `tpd_restore`, `tpd2_cancel`,
+  `tpd2_clear`, `tpd2_save`, `tpd2_restore`, `crg_save`, `cursor_move`,
+  `dpc_mark`, `dpc_unmark` (the pixel at `cursor_x`, `cursor_y`),
+  `tpd1_recalibrate`, `tpd2_point1`, `tpd2_point2` (with `tpd_reference`,
+  a whole number whose unit the library does not give), `vl_read`,
+  `vl_write`, `crg_write`; switches `cursor`, `nuc_bypass`; numbers
+  `cursor_x`, `cursor_y`, `tpd_reference`, `vl_register`, `vl_value`,
+  `crg_new_value`; sensor `vl_result`. Sensors: `streaming`, `status`,
+  `sun_detected`, `shutter_countdown`, `camera_max_temperature`,
+  `camera_min_temperature`, `camera_point_temperature`,
+  `device_temperature`, `powered_time`, `crg_value`, `sensor_vtemp`; text
+  `range_in_use`, `palettes`, `device_status`, `shutter_status`,
+  `stream_source`, `digital_video_output`, `system_data_flag`,
+  `cursor_position`, and the device information `model`, `firmware`,
+  `customer_id`, `vendor_id`, `product_id`, `part_number`, `serial`,
+  `isp_version`, `abstract_version`, `system_version`,
+  `calibration_version`, `data_version`, `package_version`, `sensor_type`,
+  `sensor_id`.
 - **hti301**: `mode` (radiometric, processed), `range` (normal, high),
   `palette` (processed mode: white_hot, black_hot, ironbow, lava, rainbow,
   iron_gray, red_hot, rainbow_2), `emissivity` (default 0.95), and
@@ -451,6 +590,132 @@ is and only the statistics are computed, in one read-only pass. If the
 source supplied statistics and no median is wanted, they are used and the
 frame is not read at all.
 
+`seek_compact_pro` follows libseek-thermal (MIT) for the protocol and Seek's
+own library (libseekip in the Seek Thermal app 2.3.4, studied for this camera)
+for the calibration. On connection it claims interface 0 and sends the vendor's
+start-up sequence as vendor control requests: stop (in case the camera was
+left running), target platform, firmware and chip ID, factory settings, the
+factory settings block (2560 words, 32 at a time: all the camera keeps; its
+64 KB beyond that is empty), image processing mode 8, then running. Each
+frame is asked for with START_GET_IMAGE_TRANSFER (its word count) and
+arrives on bulk endpoint 0x81 as 342x260 16-bit words, in 13 pieces of
+13680 bytes that each end in a short packet; three 13824-byte transfers stay
+queued. The next frame is asked for from the USB task the moment the last
+piece arrives: asked for late, the camera stops for good. Word 0 of every
+frame is 1401 (a frame without it is dropped), word 2 says what it is. The
+picture is the 320x240 at column 2, row 12 (the camera's geometry record).
+After each start the camera sends its calibration as frames, once: 4 each
+pixel's response (the gain is 16384 x the mean over the pixel's value; 0
+marks a bad pixel), 9 a 16384-entry table every raw value goes through
+first (halved below 15000, doubled from it), 14 a temperature correction
+table, 8 the start-up shutter frame and 7 offsets for raw values from 15000
+up (the camera's second range); then images (3), with a shutter frame (1),
+and a frame just before it (6), every few seconds. An image pixel is 3000 +
+(table 9 of the raw value - table 9 of the last shutter frame) x gain /
+16384. Bad pixels, and the configured `bad_columns`, take the mean of their
+neighbours. Temperatures, for factory thermography version 3: s is the mean
+of row 2's first 324 pixels (smoothed 7:1 over frames 1, 3, 6 and 8) less
+the factory reference (byte 0x64); x = k0 + k1 (pixel - 3000) (0x98, 0x9C);
+seven coefficients, each a quadratic in s (0xA0 on), give T = D + C x + A x^2
++ B x^3, or G + F x + E x^2 from the threshold at 0xF4 on; frame 14's table
+(format 3: nodes in temperature along an axis in s, 1/32 °C) then takes off a
+correction that is piecewise linear in T; and a warm-up transient, 6.7 °C x
+exp(-t / 95 s) with t the camera's own uptime from the frame header, comes
+off last, then `gain` and `offset`. On the camera measured, a wall read
+70.8 °F against the room sensor's 71.3 °F, and a face 88 °F. Before the
+conversion, Seek's default picture filter runs on the pixels (`scene_filter`,
+on by default): a pixel more than 15 counts (about 0.6 °F) off its 3x3 median
+takes the median, every frame; with enough scene motion (over 10% of the flat
+pixels changing by more than 14 counts between frames) it learns each
+pixel's offset, which decays 127/128 a frame otherwise; then small
+frame-to-frame changes (under 24 counts) are smoothed. The picture after a
+shutter frame does not learn, and the smoothing starts again. On still
+scenes it never learns; the median step took the fine speckle from 0.42-0.53
+to 0.32-0.34 °F, and the smoothing to 0.27-0.31 °F. A
+factory block of another version, or for another camera, gives no
+temperatures (logged). The tables come once per start: a shutter frame or
+image before all three means one was lost (the camera sometimes sends a
+short first frame), and the camera is then started again.
+Table and shutter frames are always processed, in order (up to four
+waiting); only images are dropped when processing falls behind. A frame that does not arrive within a
+second is asked for again, its partial data discarded; after three in a row
+the camera is started again.
+
+`thermal_master_p1` follows the vendor's Android app, Thermal Master 2.3.11,
+decompiled: its command library (libircmd020), its USB stream code and its
+Java. The start-up sequence and the frame layout as seen on the wire are
+also those of the open drivers that ran on a P1 (jvdillon/p3-ir-camera,
+Apache-2.0, from captures of the vendor's Windows tool; Open-TM-P1). The
+camera is a vendor device, not UVC; the library puts it in its device type
+15 with the P3.
+
+A command goes in a vendor control request (0x41, 0x20). The library's id
+0xAABBCC is bytes 0xCC, 0xBB (the group), 0xAA (the command); the first
+byte picks the header: 18 bytes (response length at 12-13, CRC-16/XMODEM at
+16-17) or, for the camera's own temperature measurements, 24 bytes (length
+at 16-17, CRC at 22-23). Each command puts its values where the library
+does: one byte at 4 (most), at 5 (the palette, the isothermal mode and
+switch), 16 bits at 4-5 (emissivity, transmittance, the kelvin
+temperatures), a type at 4 and 16 bits at 5-6 (the auto shutter
+parameters), two bytes at 4 and 5 (sun detection's min and max), two signed
+16-bit values at 8-11 (isothermal limits). Reads send 0 at byte 4, except
+the picture levels' "current" (1); 2 there reads the camera's limits (max,
+min, step), which are logged. After a write, the 1-byte status (0xC1, 0x22)
+is read until it is not 1 (busy), for as long as the library allows the
+command (2 s; a range change 22 s, a shutter cycle 4 s, recalibrations up to
+32 s), and it must end at 3. A read's status must be 2, then the response
+(0xC1, 0x21, exactly the length asked for), then the status 3. Resets
+(reboot, factory settings, bootloader) are sent with no status read. A
+command the camera refuses is logged and its entity keeps its last value;
+one the camera does not answer restarts the camera.
+
+On connection: interface 1 to alternate setting 0 (in case it was left
+streaming), the camera's name, firmware and system version, the range read,
+1 s, interface 1 alternate setting 1 (bulk IN 0x81), the vendor request
+0xEE, 2 s, bulk transfers queued, the range read again, then the range.
+That is the Windows tool's sequence (without its delays the camera takes
+every command and sends nothing); the vendor's Android app only selects the
+interface, sends 0xEE and queues its reads. After a range change the
+camera's state (0x830101) is read every second while it says the change is
+under way, then the range is read back. A frame arrives as a 12-byte start
+marker (a UVC payload header), 242 rows of 160 16-bit words (the camera's
+YUYV picture, two metadata rows, then the temperatures), ending in a short
+packet, and a 12-byte end marker as a transfer of its own; four 8 KB
+transfers stay queued. A frame is kept when its end marker comes exactly
+after its rows, with start and end markers matching (sync bytes 0x8C/0x8D
+and 0x8E/0x8F, the same frame counter). An end marker anywhere else ends a
+frame joined part way, and a frame longer than a frame (the one after a
+shutter cycle) is dropped up to its end marker. The markers' phase steps
+about 40 a frame, so frames the camera made and never sent are counted.
+
+A temperature is value / 64 - 273.15 °C in both ranges, times `gain` plus
+`offset`. In the high range a value under 200 K is no reading and takes its
+left (or upper) neighbour's, and a frame with no readings at all is not
+passed on and shows in `status`. In the low range a value under 302 °F
+reads 302 °F (the vendor app shows "<150 °C"; at room temperature such
+values are about -357 °F). The automatic range is the library's, run on
+every frame: more than 95 % of the pixels under 338 °F votes for the high
+range, otherwise more than 10 % at or over 338 °F votes for the low range;
+after more than 125 frames in a row with the same vote the range is
+changed if it differs, and the next 176 frames are not looked at. The
+metadata rows are read where the vendor's Java reads them: byte 42 the
+shutter countdown, 138 the camera's sun flag. If no frame comes within 5 s
+of the start, or 3 s while streaming, the camera is started again (the
+vendor app has no such watchdog). The picture rows are YUYV 4:2:2,
+converted to RGB565.
+
+The vendor app corrects for emissivity, ambient temperature and distance
+itself, from tables of its own, and never sends the camera's environment
+correction commands; they are here as the camera's settings, unused unless
+set. The library's other commands are not offered: zoom (not in its command
+table; the apps zoom in software), scene modes (the app offers them only on
+other models), the stream source setting and the camera's point display
+(refused for device type 15), pause and preview stop (the component starts
+the stream again when frames stop), and the engineering ones whose contents
+the library does not describe (ISP and algorithm registers, TPD parameters,
+OEM calibration files, the EEPROM update flag, the second calibration
+flags).
+
 `hti301` follows the camera's own driver. On connection it reads the UVC
 descriptors, sets the streaming interface to alternate setting 0,
 negotiates the stream with probe/commit, selects the isochronous alternate
@@ -602,7 +867,18 @@ build) and drops its pins of the ESP32-P4 Wi-Fi libraries, so ESPHome's
 `tests/run_tests.py` runs:
 
 - unit tests under AddressSanitizer and UBSan: frames and pools, radiometric
-  processing, the CPU ISP, overlay drawing, sub-page assembly, the HTI-301
+  processing, the CPU ISP, overlay drawing, sub-page assembly, the Seek
+  Compact Pro core (frame header and geometry, factory block, the start-up
+  tables: gains and bad pixels, raw-value table, correction table, second
+  range; bad columns, shutter offsets, sensor value, temperatures, warm-up,
+  the order of frames), the Thermal Master P1 core (the commands byte for
+  byte as captured from the vendor's tool; the vendor library's command
+  set: headers, value placement, reads, limits, time allowed, and where it
+  meets the captures; markers, frame assembly: joined part way, the long
+  frame after a shutter cycle, bad markers, no buffer, frames the camera
+  skipped; temperatures in both ranges; the metadata rows; the automatic
+  range's votes; the picture),
+  the HTI-301
   core (descriptors, packet assembly, the temperature conversion against the
   reference code, YUYV), the RTSP protocol helpers, and the RTSP server's
   keyframe requests for a client that falls behind; the frame pool also runs
