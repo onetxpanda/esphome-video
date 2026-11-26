@@ -1,13 +1,19 @@
 // Home Assistant dashboard card for an esphome-video thermal camera's spot
-// meters: shows the camera live; a click on the image adds a spot of the
-// chosen material there, a click on a spot removes it. The camera draws each
-// spot in its own colour; the list below the image shows the same colours,
-// with each spot's material.
+// meters: plays the camera's video live with Home Assistant's own player
+// (WebRTC or HLS, as for any camera); a click on the picture adds a spot of
+// the chosen material there, a click on a spot removes it. The camera draws
+// each spot in its own colour; the list below the picture shows the same
+// colours, with each spot's material.
 //
 //   type: custom:thermal-spot-card
-//   camera: camera.esp32_p4_dev_kit_thermal_camera
+//   camera: camera.thermal_camera                   # a camera with a video stream,
+//                                                   # e.g. a Generic Camera on the RTSP URL
 //   spots: sensor.esp32_p4_dev_kit_thermal_spots   # the isp's `spots` text sensor
 //   device: esp32_p4_devkit                         # the ESPHome node name, with _ for -
+//   aspect_ratio: "4:3"                             # the stream's; default 4:3 (640x480)
+//
+// Clicks are placed as a fraction of the picture, so aspect_ratio must match
+// the stream's.
 //
 // The device needs the four API actions from the README (thermal_spot,
 // thermal_spot_material, thermal_remove_spot, thermal_clear_spots); other
@@ -45,8 +51,9 @@ const SPOT_COLORS = ['rgb(0, 255, 255)', 'rgb(0, 255, 0)', 'rgb(255, 0, 255)', '
 const STORE_KEY = 'thermal-spot-card.material';
 
 const CSS = `
-  .frame { position: relative; line-height: 0; background: #000; }
-  .frame img { width: 100%; display: block; min-height: 120px; }
+  .frame { position: relative; line-height: 0; background: #000; overflow: hidden; }
+  .live { position: absolute; inset: 0; display: block;
+    --ha-card-border-width: 0; --ha-card-box-shadow: none; --ha-card-border-radius: 0; }
   .hit { position: absolute; inset: 0; cursor: crosshair; }
   .ping { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%;
     border: 2px solid #fff; pointer-events: none; animation: ping 1.2s ease-out forwards; }
@@ -89,6 +96,10 @@ class ThermalSpotCard extends HTMLElement {
     if (!config.device && !(config.toggle_action && config.material_action && config.remove_action && config.clear_action))
       throw new Error('device (or all four *_action options) is required');
     const action = (key, name) => config[key] || `esphome.${config.device}_${name}`;
+    const ratio = String(config.aspect_ratio || '4:3').match(/^\s*(\d+(?:\.\d+)?)\s*[:x/]\s*(\d+(?:\.\d+)?)\s*$/);
+    if (!ratio || !(parseFloat(ratio[1]) > 0) || !(parseFloat(ratio[2]) > 0))
+      throw new Error('aspect_ratio must look like 4:3');
+    this._ratio = [ratio[1], ratio[2]];
     this._config = config;
     this._actions = {
       toggle: action('toggle_action', 'thermal_spot'),
@@ -101,9 +112,8 @@ class ThermalSpotCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._root) this._build();
-    const cam = hass.states[this._config.camera];
-    this._token = cam && cam.attributes.access_token;
-    if (!this._img.getAttribute('src')) this._startStream();
+    if (this._live) this._live.hass = hass;
+    else this._startStream();
     const text = (hass.states[this._config.spots] || {}).state;
     if (text !== this._spotsText) {
       this._spotsText = text;
@@ -128,15 +138,13 @@ class ThermalSpotCard extends HTMLElement {
 
   disconnectedCallback() {
     document.removeEventListener('visibilitychange', this._onVisibility);
-    clearTimeout(this._retry);
-    this._retrying = false;
     this._stopStream();
   }
 
   getCardSize() { return 8; }
 
   static getStubConfig() {
-    return { camera: '', spots: '', device: '' };
+    return { camera: '', spots: '', device: '', aspect_ratio: '4:3' };
   }
 
   _build() {
@@ -148,24 +156,13 @@ class ThermalSpotCard extends HTMLElement {
 
     const frame = document.createElement('div');
     frame.className = 'frame';
-    this._img = document.createElement('img');
-    this._img.alt = '';
-    this._img.addEventListener('error', () => {
-      // A dropped stream (or an expired token): try again with the current one.
-      if (!this._img.getAttribute('src')) return;
-      this._stopStream();
-      this._retrying = true;
-      clearTimeout(this._retry);
-      this._retry = setTimeout(() => {
-        this._retrying = false;
-        this._startStream();
-      }, 3000);
-    });
+    frame.style.aspectRatio = `${this._ratio[0]} / ${this._ratio[1]}`;
+    this._frame = frame;
     this._marks = document.createElement('div');
     const hit = document.createElement('div');
     hit.className = 'hit';
     hit.addEventListener('click', (e) => this._click(e));
-    frame.append(this._img, this._marks, hit);
+    frame.append(this._marks, hit);
 
     const bar = document.createElement('div');
     bar.className = 'bar';
@@ -194,19 +191,40 @@ class ThermalSpotCard extends HTMLElement {
     this._root.append(style, card);
   }
 
-  _startStream() {
-    if (!this._img || !this._token || !this.isConnected || this._hidden || this._retrying) return;
-    if (this._img.getAttribute('src')) return;
-    this._img.src = `/api/camera_proxy_stream/${this._config.camera}?token=${encodeURIComponent(this._token)}`;
+  // The live picture is Home Assistant's picture-entity card in live view,
+  // which plays the camera's stream and reconnects on its own. It is on the
+  // page only while the card is shown; taken off, it ends the stream.
+  async _startStream() {
+    if (!this._frame || !this._hass || !this.isConnected || this._hidden || this._live || this._starting) return;
+    this._starting = true;
+    try {
+      if (!window.loadCardHelpers) throw new Error('this Home Assistant has no card helpers');
+      const helpers = await window.loadCardHelpers();
+      const live = await helpers.createCardElement({
+        type: 'picture-entity', entity: this._config.camera, camera_view: 'live',
+        show_name: false, show_state: false, aspect_ratio: `${this._ratio[0]}:${this._ratio[1]}`,
+        tap_action: { action: 'none' }, hold_action: { action: 'none' }, double_tap_action: { action: 'none' },
+      });
+      // Hidden or removed while the helpers loaded: do not start.
+      if (!this.isConnected || this._hidden || this._live) return;
+      live.classList.add('live');
+      live.hass = this._hass;
+      this._live = live;
+      this._frame.prepend(live);
+    } catch (err) {
+      this._error.textContent = `No live picture: ${err.message || err}`;
+    } finally {
+      this._starting = false;
+    }
   }
 
   _stopStream() {
-    // An empty src ends the stream's request.
-    if (this._img) this._img.removeAttribute('src');
+    if (this._live) this._live.remove();
+    this._live = null;
   }
 
   _click(e) {
-    const r = this._img.getBoundingClientRect();
+    const r = this._frame.getBoundingClientRect();
     if (!r.width || !r.height) return;
     const x = ((e.clientX - r.left) / r.width) * 100;
     const y = ((e.clientY - r.top) / r.height) * 100;
@@ -256,5 +274,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'thermal-spot-card',
   name: 'Thermal spots',
-  description: 'Place spot meters on an esphome-video thermal camera by clicking the image.',
+  description: 'Place spot meters on an esphome-video thermal camera by clicking its live picture.',
 });

@@ -295,13 +295,18 @@ dashboard resource (JavaScript module), then add a card:
 
 ```yaml
 type: custom:thermal-spot-card
-camera: camera.esp32_p4_dev_kit_thermal_camera
+camera: camera.thermal_camera   # a camera with the device's video stream
 spots: sensor.esp32_p4_dev_kit_thermal_spots
 device: esp32_p4_devkit   # the ESPHome node name, - written as _
+aspect_ratio: "4:3"       # the stream's (default 4:3)
 ```
 
-It shows the camera live (paused while the page is hidden) and remembers
-the material for new spots per browser.
+`camera` is a Home Assistant camera that plays the device's RTSP stream,
+for example a Generic Camera with stream source
+`rtsp://<device>:554/stream`. The card plays it with Home Assistant's own
+live player (WebRTC or HLS), stops it while the page is hidden, and
+remembers the material for new spots per browser. Clicks are placed as a
+fraction of the picture, so `aspect_ratio` must match the stream.
 
 ### Matter camera
 
