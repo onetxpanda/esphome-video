@@ -184,9 +184,26 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
   const int step = o.mirror_x ? -1 : 1;
   const bool my = o.mirror_y;
   uint8_t *idx = this->idx_.data();
+  // Interpolating scalers work on the mapped values before they are rounded
+  // to a palette entry (see fine_); without the memory they fall back to idx_.
+  this->fine_valid_ = o.scale > 1 && o.upscale != Upscale::NEAREST && this->fine_.ensure(n);
+  uint16_t *fine = this->fine_valid_ ? this->fine_.data() : nullptr;
   if (linear_tone(o)) {
     this->curve_valid_ = false;  // equalization starts afresh when turned on
     const float lo = o.range_min, k = index_scale(o);
+    if (fine != nullptr) {
+      for (int y = 0; y < in_h; y++) {
+        const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
+        uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
+        uint16_t *fdst = fine + static_cast<size_t>(y) * in_w;
+        for (int x = 0; x < in_w; x++, src += step) {
+          const float v = std::fmin(std::fmax((*src - lo) * k, 0.0f), 255.0f);  // as to_index()
+          dst[x] = static_cast<uint8_t>(v + 0.5f);
+          fdst[x] = static_cast<uint16_t>(v * FINE_ONE + 0.5f);
+        }
+      }
+      return true;
+    }
     for (int y = 0; y < in_h; y++) {
       const float *src = in + static_cast<size_t>(my ? in_h - 1 - y : y) * in_w + (step < 0 ? in_w - 1 : 0);
       uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
@@ -230,6 +247,7 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
   for (int y = 0; y < in_h; y++) {
     const size_t srow = static_cast<size_t>(my ? in_h - 1 - y : y) * in_w;
     uint8_t *dst = idx + static_cast<size_t>(y) * in_w;
+    uint16_t *fdst = fine != nullptr ? fine + static_cast<size_t>(y) * in_w : nullptr;
     for (int x = 0; x < in_w; x++) {
       const size_t i = srow + (step < 0 ? in_w - 1 - x : x);
       const float t = in[i];
@@ -242,7 +260,10 @@ bool CpuIsp::tone_map(const float *in, uint16_t in_w, uint16_t in_h, const Optio
       } else {
         v = f(t);
       }
-      dst[x] = static_cast<uint8_t>(std::fmin(std::fmax(v, 0.0f), 255.0f) + 0.5f);
+      v = std::fmin(std::fmax(v, 0.0f), 255.0f);
+      dst[x] = static_cast<uint8_t>(v + 0.5f);
+      if (fdst != nullptr)
+        fdst[x] = static_cast<uint16_t>(v * FINE_ONE + 0.5f);
     }
   }
   return true;
@@ -476,43 +497,58 @@ void CpuIsp::render(const Options &o, uint8_t *dst, uint32_t stride) const {
     return;
   }
 
+  // The mapped values with their fraction, as tone_map() left them. When it
+  // did not (it was given other options, or had no memory), the palette
+  // indices stand in: the result is then as coarse as they are.
+  const uint16_t *src = this->fine_.data();
+  video::LargeBuffer<uint16_t> coarse;
+  if (!this->fine_valid_) {
+    const size_t n = static_cast<size_t>(this->w_) * this->h_;
+    if (!coarse.ensure(n))
+      return;
+    for (size_t i = 0; i < n; i++)
+      coarse[i] = static_cast<uint16_t>(this->idx_[i] * FINE_ONE);
+    src = coarse.data();
+  }
+
   if (o.upscale == Upscale::BICUBIC) {
     switch (o.format) {
       case ImageFormat::RGB565_LE:
-        this->bicubic_<ImageFormat::RGB565_LE>(s, dst, stride);
+        this->bicubic_<ImageFormat::RGB565_LE>(src, s, dst, stride);
         break;
       case ImageFormat::RGB565_BE:
-        this->bicubic_<ImageFormat::RGB565_BE>(s, dst, stride);
+        this->bicubic_<ImageFormat::RGB565_BE>(src, s, dst, stride);
         break;
       case ImageFormat::RGB888:
-        this->bicubic_<ImageFormat::RGB888>(s, dst, stride);
+        this->bicubic_<ImageFormat::RGB888>(src, s, dst, stride);
         break;
       case ImageFormat::GRAY8:
-        this->bicubic_<ImageFormat::GRAY8>(s, dst, stride);
+        this->bicubic_<ImageFormat::GRAY8>(src, s, dst, stride);
         break;
     }
     return;
   }
   switch (o.format) {
     case ImageFormat::RGB565_LE:
-      this->bilinear_<ImageFormat::RGB565_LE>(s, dst, stride);
+      this->bilinear_<ImageFormat::RGB565_LE>(src, s, dst, stride);
       break;
     case ImageFormat::RGB565_BE:
-      this->bilinear_<ImageFormat::RGB565_BE>(s, dst, stride);
+      this->bilinear_<ImageFormat::RGB565_BE>(src, s, dst, stride);
       break;
     case ImageFormat::RGB888:
-      this->bilinear_<ImageFormat::RGB888>(s, dst, stride);
+      this->bilinear_<ImageFormat::RGB888>(src, s, dst, stride);
       break;
     case ImageFormat::GRAY8:
-      this->bilinear_<ImageFormat::GRAY8>(s, dst, stride);
+      this->bilinear_<ImageFormat::GRAY8>(src, s, dst, stride);
       break;
   }
 }
 
-// Bilinear on the index field, sampling at pixel centres. Per output row the
-// two source rows are blended once at input width; each output pixel is then
-// a 1-D interpolation of that blended row plus a palette lookup.
-template<ImageFormat F> void CpuIsp::bilinear_(int s, uint8_t *dst, uint32_t stride) const {
+// Bilinear on the mapped values (`src`: index * 256), sampling at pixel
+// centres. Per output row the two source rows are blended once at input
+// width; each output pixel is then a 1-D interpolation of that blended row,
+// rounded to a palette entry, plus a palette lookup.
+template<ImageFormat F> void CpuIsp::bilinear_(const uint16_t *src, int s, uint8_t *dst, uint32_t stride) const {
   const int ow = this->w_ * s, oh = this->h_ * s;
   constexpr size_t bpp = F == ImageFormat::RGB888 ? 3 : (F == ImageFormat::GRAY8 ? 1 : 2);
   // Horizontal sample positions (in 1/256 of an input pixel) for every output column.
@@ -524,16 +560,16 @@ template<ImageFormat F> void CpuIsp::bilinear_(int s, uint8_t *dst, uint32_t str
     x1[ox] = static_cast<uint16_t>(std::min((sx >> 8) + 1, this->w_ - 1));
     fx[ox] = static_cast<uint16_t>(sx & 0xFF);
   }
-  std::vector<uint32_t> blended(this->w_);  // index * 256, after the vertical blend
+  std::vector<uint32_t> blended(this->w_);  // index * 256, after the vertical blend (rounded back to 16 bits)
   for (int oy = 0; oy < oh; oy++) {
     int sy = ((2 * oy + 1) * 256) / (2 * s) - 128;
     sy = std::min(std::max(sy, 0), (this->h_ - 1) * 256);
     const int y0 = sy >> 8, y1 = std::min(y0 + 1, this->h_ - 1);
     const uint32_t fy = static_cast<uint32_t>(sy & 0xFF);
-    const uint8_t *r0 = &this->idx_[y0 * this->w_];
-    const uint8_t *r1 = &this->idx_[y1 * this->w_];
+    const uint16_t *r0 = src + static_cast<size_t>(y0) * this->w_;
+    const uint16_t *r1 = src + static_cast<size_t>(y1) * this->w_;
     for (int x = 0; x < this->w_; x++)
-      blended[x] = r0[x] * (256 - fy) + r1[x] * fy;
+      blended[x] = (r0[x] * (256 - fy) + r1[x] * fy + 128) >> 8;
     uint8_t *p = dst + static_cast<size_t>(oy) * stride;
     for (int ox = 0; ox < ow; ox++, p += bpp) {
       const uint32_t v = (blended[x0[ox]] * (256 - fx[ox]) + blended[x1[ox]] * fx[ox] + (1u << 15)) >> 16;
@@ -558,7 +594,7 @@ template<ImageFormat F> void CpuIsp::bilinear_(int s, uint8_t *dst, uint32_t str
   }
 }
 
-// Bicubic (Catmull-Rom) on the index field, sampling at pixel centres like
+// Bicubic (Catmull-Rom) on the mapped values (`src`: index * 256), sampling at pixel centres like
 // bilinear_(). Output pixel q * s + p (input pixel q, phase p) samples at
 // q + (p + 0.5) / s - 0.5, so the taps and weights depend only on the phase:
 // they are worked out once per phase (at most 20). Per output row the four
@@ -570,7 +606,7 @@ template<ImageFormat F> void CpuIsp::bilinear_(int s, uint8_t *dst, uint32_t str
 #pragma GCC push_options
 #pragma GCC optimize("O2")
 #endif
-template<ImageFormat F> void CpuIsp::bicubic_(int s, uint8_t *dst, uint32_t stride) const {
+template<ImageFormat F> void CpuIsp::bicubic_(const uint16_t *src, int s, uint8_t *dst, uint32_t stride) const {
   const int w = this->w_, h = this->h_;
   constexpr size_t bpp = F == ImageFormat::RGB888 ? 3 : (F == ImageFormat::GRAY8 ? 1 : 2);
   int off[20];      // first tap relative to q
@@ -589,16 +625,18 @@ template<ImageFormat F> void CpuIsp::bicubic_(int s, uint8_t *dst, uint32_t stri
     }
     wt[p][1] += 256 - sum;
   }
-  std::vector<int32_t> blended(w);  // index * 256, after the vertical blend
+  std::vector<int32_t> blended(w);  // index * 256, after the vertical blend (rounded back from * 65536)
   auto clampi = [](int v, int n) { return v < 0 ? 0 : (v >= n ? n - 1 : v); };
   for (int qy = 0; qy < h; qy++) {
     for (int py = 0; py < s; py++) {
-      const uint8_t *r[4];
+      const uint16_t *r[4];
       for (int k = 0; k < 4; k++)
-        r[k] = &this->idx_[clampi(qy + off[py] + k, h) * w];
+        r[k] = src + static_cast<size_t>(clampi(qy + off[py] + k, h)) * w;
       const int32_t *wy = wt[py];
+      // The overshoot stays far inside 32 bits: the weights' magnitudes sum
+      // to under 1.3 * 256, the values are at most 255 * 256.
       for (int x = 0; x < w; x++)
-        blended[x] = wy[0] * r[0][x] + wy[1] * r[1][x] + wy[2] * r[2][x] + wy[3] * r[3][x];
+        blended[x] = (wy[0] * r[0][x] + wy[1] * r[1][x] + wy[2] * r[2][x] + wy[3] * r[3][x] + 128) >> 8;
       uint8_t *p = dst + static_cast<size_t>(qy * s + py) * stride;
       for (int qx = 0; qx < w; qx++) {
         for (int px = 0; px < s; px++, p += bpp) {

@@ -792,6 +792,12 @@ so each value is tone-mapped and coloured straight into the output frame in
 one pass (unless `equalize` or `detail` is on). The CPU path has three modes. Nearest
 builds each output row once and copies it. Bilinear blends the two source
 rows once per output row, then interpolates along the row, in fixed point.
+Bilinear and bicubic interpolate the mapped values before they are rounded
+to a palette index (16 bits, 8 of them fraction) and round per output pixel.
+Rounding first would leave nothing to interpolate where neighbouring pixels
+are less than one palette entry apart, as in a scene much narrower than the
+range: the steps between entries would then sit on the sensor's pixel grid
+and show as blocks, however large the scale.
 Bicubic (Catmull-Rom) does the same with four rows and four columns; its
 taps and weights depend only on an output pixel's position within its
 input pixel, so they are worked out once per position. It gives smoother
@@ -800,7 +806,8 @@ scales, and overshoots slightly at edges, which reads as sharpening. The PPA
 scales only bilinearly, so bicubic always scales on the CPU.
 The PPA path has the PPA scale the index image (8-bit grey, chip revision 3
 or later) bilinearly, then looks the palette up on the CPU, one table read
-per output pixel. Scaling the coloured image instead would blend colours,
+per output pixel. The PPA takes 8-bit pixels, so on this path the indices
+are rounded before scaling. Scaling the coloured image instead would blend colours,
 which leaves colours between pixels that are not on the palette. ESP-IDF 5.5
 has no driver for the PPA's own colour look-up table. The PPA scales only
 bilinearly, so with `upscale: nearest` the CPU scales, which only copies. If

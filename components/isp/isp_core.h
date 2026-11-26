@@ -7,7 +7,11 @@
 //
 // Tone mapping happens once at input resolution (into an 8-bit index image);
 // scaling then works on indices, so cost per output pixel is a few integer
-// operations and a palette lookup.
+// operations and a palette lookup. The interpolating scalers take the mapped
+// values with 8 more bits of fraction and round to a palette entry per output
+// pixel: where neighbouring pixels are less than a palette entry apart (a
+// scene much narrower than the range), the steps between entries then follow
+// the scene's contours, not the input's pixel grid.
 //
 // Tone mapping is linear over the range by default. Two options change it:
 // - equalize mixes in histogram equalization (with a plateau limit and
@@ -148,8 +152,8 @@ class CpuIsp {
 
  protected:
   void write_px_(uint8_t *p, uint8_t idx, video::ImageFormat f) const;
-  template<video::ImageFormat F> void bilinear_(int s, uint8_t *dst, uint32_t stride) const;
-  template<video::ImageFormat F> void bicubic_(int s, uint8_t *dst, uint32_t stride) const;
+  template<video::ImageFormat F> void bilinear_(const uint16_t *src, int s, uint8_t *dst, uint32_t stride) const;
+  template<video::ImageFormat F> void bicubic_(const uint16_t *src, int s, uint8_t *dst, uint32_t stride) const;
   // The tone curve at CURVE_BINS + 1 evenly spaced points over the range.
   void update_curve_(const float *in, size_t n, const Options &o);
   template<video::ImageFormat F>
@@ -160,6 +164,11 @@ class CpuIsp {
   std::array<Rgb, 256> palette_{};
   std::array<uint16_t, 256> pal565_le_{};  // palette as RGB565 values
   video::LargeBuffer<uint8_t> idx_;
+  // The same image before rounding: index * FINE_ONE, 0 .. 255 * FINE_ONE.
+  // Filled by tone_map() when its options ask for an interpolating scaler.
+  static constexpr int FINE_ONE = 256;
+  video::LargeBuffer<uint16_t> fine_;
+  bool fine_valid_{false};
   uint16_t w_{0}, h_{0};
 
  public:

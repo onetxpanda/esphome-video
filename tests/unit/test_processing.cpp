@@ -408,6 +408,67 @@ static void test_bicubic() {
   CHECK(a[0] == 0 && a[ow * oh - 1] == 0);
 }
 
+// A scene much narrower than the range: neighbouring pixels are a fraction of
+// a palette entry apart. The interpolating scalers round after interpolating,
+// so the steps between entries lie where the scene's own (here straight,
+// slanted) contours are, not on the input's pixel grid.
+static void test_scaling_precision() {
+  const int s = 8, ow = W * s, oh = H * s;
+  isp::Options o;
+  o.range_min = 0;
+  o.range_max = 255;
+  o.scale = s;
+  o.format = video::ImageFormat::GRAY8;
+  std::vector<float> t(N);
+  auto plane = [](float x, float y) { return 100.0f + 0.23f * x + 0.11f * y; };
+  for (int y = 0; y < H; y++)
+    for (int x = 0; x < W; x++)
+      t[y * W + x] = plane(x, y);
+  // How many inner output pixels are not the plane's own palette entry there
+  // (pixels the plane puts within 0.05 of a rounding boundary do not count).
+  auto wrong = [&](const std::vector<uint8_t> &g) {
+    int bad = 0, n = 0;
+    for (int oy = 2 * s; oy < oh - 2 * s; oy++)
+      for (int ox = 2 * s; ox < ow - 2 * s; ox++) {
+        const float v = plane((ox + 0.5f) / s - 0.5f, (oy + 0.5f) / s - 0.5f);
+        if (std::fabs(v - std::floor(v) - 0.5f) < 0.05f)
+          continue;
+        n++;
+        bad += g[oy * ow + ox] != static_cast<uint8_t>(v + 0.5f);
+      }
+    return 100.0f * bad / n;
+  };
+  for (auto up : {isp::Upscale::BILINEAR, isp::Upscale::BICUBIC}) {
+    isp::CpuIsp c;
+    c.set_palette(gray_palette());
+    std::vector<uint8_t> g(ow * oh);
+    o.upscale = up;
+    CHECK(c.tone_map(t.data(), W, H, o));
+    c.render(o, g.data(), ow);
+    CHECK(wrong(g) < 0.1f);
+    // The palette indices are what they always were.
+    bool same = true;
+    for (int i = 0; i < N; i++)
+      same = same && c.indices()[i] == static_cast<uint8_t>(t[i] + 0.5f);
+    CHECK(same);
+    // Equalization and detail go through the same precision: mixed in fully
+    // linear (equalize just above 0 keeps the curve all but linear).
+    o.equalize = 1e-4f;
+    CHECK(c.tone_map(t.data(), W, H, o));
+    c.render(o, g.data(), ow);
+    CHECK(wrong(g) < 0.1f);
+    o.equalize = 0.0f;
+    // Mapped for another scaler, then rendered with this one: still an
+    // image, only as coarse as the indices (steps on the pixel grid).
+    o.upscale = isp::Upscale::NEAREST;
+    CHECK(c.tone_map(t.data(), W, H, o));
+    o.upscale = up;
+    c.render(o, g.data(), ow);
+    const float coarse = wrong(g);
+    CHECK(coarse > 0.5f && coarse < 5.0f);
+  }
+}
+
 // Relative speed of the new CPU renderer against the float renderer it replaces.
 static void bench() {
   isp::CpuIsp c;
@@ -866,6 +927,7 @@ int main() {
   test_curve_blend();
   test_tone_curve();
   test_bicubic();
+  test_scaling_precision();
   test_large_frames();
   bench();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
