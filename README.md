@@ -472,8 +472,9 @@ isp:
   position and value are refreshed; default 1 s; a spot that is moved moves
   at once), `unit` (C, F), `enabled`. Controls: `enabled`, `unit`.
 - **h264_encoder**: `source` (list), `fps` (default: measured from the
-  source), `gop` (default: one keyframe per second), `bitrate` (default:
-  automatic), `qp_min`, `qp_max`. Select platform: switches the active source.
+  source), `min_fps` (default 5; 0 = off), `gop` (default: one keyframe per
+  second), `bitrate` (default: automatic), `qp_min`, `qp_max`. Select
+  platform: switches the active source.
 - **rtsp_server**: `port`, `path`, `session_name`, `max_clients`, `buffer_size`.
 - **video_camera**: `quality`, `subsampling` (444, 422, 420).
 - **video_test_pattern**: `width`, `height`, `fps`.
@@ -544,6 +545,12 @@ and drops frames instead of stopping the device.
   configured `fps`, the encoder declares the measured source rate in the
   stream. If that rate later stays more than 25% off for 3 s, it restarts the
   stream with a keyframe.
+- When the source is slower than `min_fps`, the encoder keeps a copy of each
+  frame and encodes it again whenever no frame has gone out for 1/`min_fps`
+  s, so the stream runs at `min_fps` (players such as Home Assistant's
+  stream worker need several frames before they start). The stream then
+  declares `min_fps`. Repeats stop 10 s after the source's last frame, so a
+  source that stops shows as a stopped stream.
 - `rtsp_server` sends each client whole frames only. When a client's backlog
   would exceed `buffer_size`, its frames are dropped until the next keyframe.
   It asks the encoder for that keyframe once, when the client's backlog has

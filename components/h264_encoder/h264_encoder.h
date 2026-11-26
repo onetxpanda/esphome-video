@@ -13,6 +13,7 @@
 #include "../video_core/frame.h"
 #include "encoded_sink.h"
 #include "esp_h264_enc_single_hw.h"
+#include "repeat_policy.h"
 
 namespace esphome {
 namespace h264_encoder {
@@ -40,7 +41,9 @@ class SourceInput : public video::ImageSink {
 // multiple of 16, packed rows) is encoded from the source's buffer, held
 // until the hardware is done; other frames are converted into a DMA buffer.
 // One frame is in flight at a time; frames arriving meanwhile are dropped.
-// Nothing is encoded while no EncodedFrameSink wants frames.
+// Nothing is encoded while no EncodedFrameSink wants frames. A source slower
+// than min_fps has its frames copied, and the last one is encoded again to
+// keep the stream at min_fps (see RepeatPolicy).
 class H264Encoder : public Component {
  public:
   void setup() override;
@@ -53,6 +56,8 @@ class H264Encoder : public Component {
   // 0 = one keyframe per second.
   void set_gop(uint8_t gop) { this->gop_ = gop; }
   void set_bitrate(uint32_t bitrate) { this->bitrate_ = bitrate; }
+  // 0 = no repeats: the stream runs at the source's rate however slow.
+  void set_min_fps(uint8_t min_fps) { this->repeat_.min_fps = min_fps; }
   void set_qp(uint8_t qp_min, uint8_t qp_max) {
     this->qp_min_ = qp_min;
     this->qp_max_ = qp_max;
@@ -95,6 +100,7 @@ class H264Encoder : public Component {
   void close_encoder_();
   uint8_t target_fps_() const;
   void note_interval_(uint32_t ts);
+  bool repeat_ready_() const;
 
   // Configuration
   uint8_t fps_{0};
@@ -102,6 +108,7 @@ class H264Encoder : public Component {
   uint32_t bitrate_{0};  // 0 = automatic
   uint8_t qp_min_{20};
   uint8_t qp_max_{40};
+  RepeatPolicy repeat_;
 
   std::vector<EncodedFrameSink *> sinks_;
   std::vector<const char *> source_names_;
@@ -126,6 +133,9 @@ class H264Encoder : public Component {
   uint16_t aligned_h_{0};
   esp_h264_raw_format_t type_{ESP_H264_RAW_FMT_RGB565_LE};
   uint32_t frame_ts_{0};
+  // The conversion buffer holds the last source frame, ready to repeat.
+  std::atomic<bool> repeatable_{false};
+  std::atomic<uint32_t> last_source_ms_{0};
 
   // Source frame rate, measured on the source's task.
   std::atomic<uint32_t> interval_x16_{0};  // mean frame interval, 1/16 ms
@@ -142,6 +152,9 @@ class H264Encoder : public Component {
   uint32_t enc_opened_ms_{0};
   bool drifting_{false};  // measured rate off from the declared one since drift_since_ms_
   uint32_t drift_since_ms_{0};
+  uint32_t last_out_ms_{0};  // when the last frame went out
+  uint32_t last_out_ts_{0};  // and its stream timestamp
+  bool have_out_ts_{false};
 
   // Statistics
   std::atomic<uint32_t> encoded_frames_{0};
@@ -150,6 +163,7 @@ class H264Encoder : public Component {
   std::atomic<uint32_t> encoded_bytes_{0};
   std::atomic<uint32_t> keyframes_{0};
   std::atomic<uint32_t> zero_copy_{0};
+  std::atomic<uint32_t> repeats_{0};
   uint32_t last_stats_ms_{0};
   std::atomic<bool> format_error_logged_{false};
 };

@@ -90,6 +90,10 @@ void H264Encoder::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  Keyframe every second");
   }
+  if (this->repeat_.enabled()) {
+    ESP_LOGCONFIG(TAG, "  Minimum frame rate: %u fps (a slower source's last frame is repeated)",
+                  this->repeat_.min_fps);
+  }
   ESP_LOGCONFIG(TAG, "  QP range: %u-%u", this->qp_min_, this->qp_max_);
   if (this->bitrate_ != 0) {
     ESP_LOGCONFIG(TAG, "  Bitrate: %u bit/s", static_cast<unsigned>(this->bitrate_));
@@ -112,10 +116,11 @@ void H264Encoder::loop() {
   if (n > 0 || this->dropped_frames_.load() > 0) {
     const uint32_t iv = this->interval_x16_.load();
     ESP_LOGD(TAG,
-             "Encoded %u frames (%u keyframes, %u without a copy, %u bytes total), dropped %u, errors %u; "
-             "source %.2f fps",
+             "Encoded %u frames (%u keyframes, %u repeats, %u without a copy, %u bytes total), dropped %u, "
+             "errors %u; source %.2f fps",
              static_cast<unsigned>(n), static_cast<unsigned>(this->keyframes_.load()),
-             static_cast<unsigned>(this->zero_copy_.load()), static_cast<unsigned>(this->encoded_bytes_.load()),
+             static_cast<unsigned>(this->repeats_.load()), static_cast<unsigned>(this->zero_copy_.load()),
+             static_cast<unsigned>(this->encoded_bytes_.load()),
              static_cast<unsigned>(this->dropped_frames_.load()), static_cast<unsigned>(this->encode_errors_.load()),
              iv ? 16000.0f / iv : 0.0f);
   }
@@ -147,7 +152,8 @@ void H264Encoder::source_changed(uint8_t index) {
   if (index != this->active_source_)
     return;
   // Start the new picture cleanly, measure its rate afresh, and report its
-  // problems afresh.
+  // problems afresh. The old picture is not repeated.
+  this->repeatable_ = false;
   this->keyframe_requested_ = true;
   this->interval_x16_ = 0;
   this->format_error_logged_ = false;
@@ -160,15 +166,17 @@ uint8_t H264Encoder::target_fps_() const {
   if (iv == 0)
     return DEFAULT_FPS;
   const long fps = std::lround(16000.0f / iv);
-  return static_cast<uint8_t>(fps < 1 ? 1 : (fps > 60 ? 60 : fps));
+  // With repeats the stream runs at min_fps or more, whatever the source does.
+  return this->repeat_.declared_fps(static_cast<uint8_t>(fps < 1 ? 1 : (fps > 60 ? 60 : fps)));
 }
 
 void H264Encoder::note_interval_(uint32_t ts) {
   // Mean interval between the active source's frames (exponential, 1/8 per
-  // frame). Gaps over 2 s (a pause) restart the measurement.
+  // frame). Gaps longer than a repeated frame may stand in for (a pause)
+  // restart the measurement.
   if (this->have_last_ts_) {
     const uint32_t d = ts - this->last_ts_;
-    if (d > 0 && d < 2000) {
+    if (d > 0 && d <= RepeatPolicy::MAX_REPEAT_MS) {
       const uint32_t x = d * 16, iv = this->interval_x16_.load();
       this->interval_x16_ = iv == 0 ? x : iv + (static_cast<int32_t>(x - iv) / 8);
     }
@@ -264,6 +272,7 @@ void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
   if (!this->consumers_want_frames_()) {
     this->was_active_ = false;
     this->have_last_ts_ = false;
+    this->repeatable_ = false;
     return;
   }
   if (!this->was_active_.exchange(true))
@@ -296,9 +305,12 @@ void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
     this->busy_ = false;
     return;
   }
+  // A slow source's frame is copied even when it could be encoded in place:
+  // the source reuses its buffer, and the copy is what gets repeated.
   const bool direct = f.format == ImageFormat::RGB565_LE && (f.width & 15) == 0 && (f.height & 15) == 0 &&
                       f.stride == static_cast<uint32_t>(f.width) * 2 &&
-                      (reinterpret_cast<uintptr_t>(f.buffer.data()) & 15) == 0;
+                      (reinterpret_cast<uintptr_t>(f.buffer.data()) & 15) == 0 &&
+                      !this->repeat_.source_slow(this->interval_x16_.load());
   if (!this->prepare_buffers_(f.width, f.height, type, !direct)) {
     this->encode_errors_++;
     this->busy_ = false;
@@ -317,7 +329,16 @@ void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
     this->in_ptr_ = this->in_buf_;
   }
   this->frame_ts_ = f.timestamp_ms;
+  this->repeatable_ = !direct && this->repeat_.enabled();
+  this->last_source_ms_ = millis();
   xTaskNotifyGive(this->task_);
+}
+
+// Called on the encoder task. Checked again once the hand-over is claimed.
+bool H264Encoder::repeat_ready_() const {
+  return this->repeat_.enabled() && this->repeatable_.load() && this->enc_ != nullptr &&
+         this->in_buf_ != nullptr && this->repeat_.may_repeat(millis(), this->last_source_ms_.load()) &&
+         this->consumers_want_frames_();
 }
 
 bool H264Encoder::open_encoder_() {
@@ -373,9 +394,29 @@ void H264Encoder::task_entry_(void *arg) { static_cast<H264Encoder *>(arg)->task
 
 void H264Encoder::task_loop_() {
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (!this->busy_.load())
-      continue;
+    // Wait for a source frame; with a repeatable frame, only until a repeat
+    // is due.
+    TickType_t wait = portMAX_DELAY;
+    if (this->repeat_ready_())
+      wait = pdMS_TO_TICKS(this->repeat_.wait_ms(millis(), this->last_out_ms_));
+    bool repeat = false;
+    if (ulTaskNotifyTake(pdTRUE, wait) != 0) {
+      if (!this->busy_.load())
+        continue;
+    } else {
+      // A repeat is due. Claim the hand-over as a source frame would; if a
+      // source frame holds it, its notification follows.
+      bool expected = false;
+      if (!this->busy_.compare_exchange_strong(expected, true))
+        continue;
+      if (!this->repeat_ready_()) {
+        this->busy_ = false;
+        continue;
+      }
+      repeat = true;
+      this->in_ptr_ = this->in_buf_;
+      this->frame_ts_ = this->last_out_ts_ + (millis() - this->last_out_ms_);
+    }
 
     if (this->enc_ != nullptr &&
         (this->enc_w_ != this->width_ || this->enc_h_ != this->height_ || this->enc_type_ != this->type_))
@@ -396,6 +437,7 @@ void H264Encoder::task_loop_() {
     }
     if (this->enc_ == nullptr) {
       if (!this->open_encoder_()) {
+        this->repeatable_ = false;
         this->encode_errors_++;
         this->held_.reset();
         this->busy_ = false;
@@ -405,6 +447,7 @@ void H264Encoder::task_loop_() {
     }
     if (this->keyframe_requested_.exchange(false) && this->param_ != nullptr)
       esp_h264_enc_force_idr(&this->param_->base);
+    this->frame_ts_ = next_timestamp(this->frame_ts_, this->last_out_ts_, this->have_out_ts_);
 
     esp_h264_enc_in_frame_t in{};
     in.raw_data.buffer = const_cast<uint8_t *>(this->in_ptr_);
@@ -417,6 +460,8 @@ void H264Encoder::task_loop_() {
     const esp_h264_err_t err = esp_h264_enc_process(this->enc_, &in, &out);
     this->held_.reset();  // the source may reuse its buffer now
     if (err != ESP_H264_ERR_OK || out.length == 0) {
+      // No repeats of a frame that failed: they would come back at once.
+      this->repeatable_ = false;
       this->encode_errors_++;
       if (this->encode_errors_.load() <= 3)
         ESP_LOGW(TAG, "Encode failed (%d)", static_cast<int>(err));
@@ -424,6 +469,11 @@ void H264Encoder::task_loop_() {
       continue;
     }
     const bool keyframe = out.frame_type == ESP_H264_FRAME_TYPE_IDR;
+    this->last_out_ms_ = millis();
+    this->last_out_ts_ = this->frame_ts_;
+    this->have_out_ts_ = true;
+    if (repeat)
+      this->repeats_++;
     this->encoded_frames_++;
     this->encoded_bytes_ += out.length;
     if (keyframe)

@@ -85,6 +85,7 @@ PIPELINE_TESTS = [
      ["video_core", "seek_compact_pro"]),
     ("test_thermal_master", ["unit/test_thermal_master.cpp", "thermal_master_p1/tm_core.cpp"],
      ["video_core", "thermal_master_p1"]),
+    ("test_repeat_policy", ["unit/test_repeat_policy.cpp"], ["h264_encoder"]),
 ]
 
 

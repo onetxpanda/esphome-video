@@ -25,6 +25,7 @@ CONF_GOP = "gop"
 CONF_BITRATE = "bitrate"
 CONF_QP_MIN = "qp_min"
 CONF_QP_MAX = "qp_max"
+CONF_MIN_FPS = "min_fps"
 
 h264_encoder_ns = cg.esphome_ns.namespace("h264_encoder")
 H264Encoder = h264_encoder_ns.class_("H264Encoder", cg.Component)
@@ -55,6 +56,10 @@ CONFIG_SCHEMA = cv.All(
             # Keyframe interval in frames (default: one per second). Smaller
             # values let viewers start sooner, at the cost of bitrate.
             cv.Optional(CONF_GOP): cv.int_range(min=1, max=255),
+            # A source slower than this has its last frame encoded again, so
+            # the stream never drops below this rate (players need several
+            # frames before they start). 0 = the source's rate, however slow.
+            cv.Optional(CONF_MIN_FPS, default=5): cv.int_range(min=0, max=30),
             # Target bitrate in bit/s. Default: automatic from frame size and fps.
             cv.Optional(CONF_BITRATE): cv.int_range(min=16000, max=40_000_000),
             cv.Optional(CONF_QP_MIN, default=20): cv.int_range(min=0, max=51),
@@ -73,6 +78,7 @@ async def to_code(config):
     cg.add(var.set_fps(config.get(CONF_FPS, 0)))
     cg.add(var.set_gop(config.get(CONF_GOP, 0)))
     cg.add(var.set_bitrate(config.get(CONF_BITRATE, 0)))
+    cg.add(var.set_min_fps(config[CONF_MIN_FPS]))
     cg.add(var.set_qp(config[CONF_QP_MIN], config[CONF_QP_MAX]))
 
     # Each source gets its own input, so the encoder knows which is active.
