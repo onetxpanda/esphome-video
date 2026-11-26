@@ -897,3 +897,37 @@ build) and drops its pins of the ESP32-P4 Wi-Fi libraries, so ESPHome's
   ESP32-P4 without warnings in these components.
 
 `--skip-esphome` skips the ESPHome compiles.
+
+## Desktop viewer
+
+`tools/thermal_viewer/thermal_viewer.py` is a PyQt window for trying a camera
+and the processing on a PC, with no ESP32-P4. A camera plugged into the
+computer is read with the same core code its component uses, and its frames
+go through this repository's own stages (`radiometric_core`, `isp_core`,
+`overlay_core`), in the order and with the glue the components have. Nothing
+is processed in Python.
+
+```
+pip install PyQt6
+tools/thermal_viewer/thermal_viewer.py            # or: --camera thermal_master_p1 --connect
+```
+
+It needs a C++17 compiler, and libusb 1.0 for the USB cameras; the native
+part (`tools/thermal_viewer/native`) is built into `build/thermal_viewer` on
+the first start and again when a source changes. No camera is opened until
+Connect is pressed (or `--connect` is given). `--list` shows the camera types.
+
+- Thermal Master P1, Seek Compact Pro: USB, through libusb, with the
+  start-up sequences of `tests/host/tm_capture.cpp` and `seek_capture.cpp`.
+  On Linux, as root or with a udev rule for the camera.
+- HTI-301: USB, through libusb. It is a UVC camera, so the system's own
+  camera driver holds it: Linux hands it over, macOS does not without root.
+- MLX90640: a Linux I2C bus (`/dev/i2c-N`), with the Melexis API; the
+  argument is `bus[,address[,rate]]`.
+- Synthetic scene: no camera, for trying the processing and the window.
+
+The controls are the components' options: the radiometric filters, the ISP's
+palette, range, equalization, detail, scale, upscaling and mirroring, the
+overlay's marks, unit and hold time. Clicking the image places a spot meter
+of the chosen material; clicking a spot removes it. Each camera's buttons are
+what its component can send while streaming (a shutter cycle, the range).
