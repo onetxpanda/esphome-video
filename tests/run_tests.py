@@ -86,6 +86,7 @@ PIPELINE_TESTS = [
     ("test_thermal_master", ["unit/test_thermal_master.cpp", "thermal_master_p1/tm_core.cpp"],
      ["video_core", "thermal_master_p1"]),
     ("test_repeat_policy", ["unit/test_repeat_policy.cpp"], ["h264_encoder"]),
+    ("test_slot_exchange", ["unit/test_slot_exchange.cpp"], ["h264_encoder"]),
 ]
 
 
@@ -95,8 +96,8 @@ def pipeline_unit_tests():
         paths = [os.path.join(HERE, s) if s.startswith("unit/") else os.path.join(COMP, s) for s in srcs]
         flags = [f"-I{os.path.join(COMP, i)}" for i in incs]
         for label, san in (("ASan/UBSan", ASAN), ("TSan", ["-fsanitize=thread"])):
-            if label == "TSan" and name != "test_frame":
-                continue  # only the frame pool is shared between threads
+            if label == "TSan" and name not in ("test_frame", "test_slot_exchange"):
+                continue  # only the frame pool and the encoder hand-over are shared between threads
             exe = build(f"{name}_{label[:4].lower()}", paths, flags + san)
             if not check(exe is not None, f"{name} builds ({label})"):
                 continue

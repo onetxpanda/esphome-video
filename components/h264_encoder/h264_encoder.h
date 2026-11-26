@@ -14,6 +14,7 @@
 #include "encoded_sink.h"
 #include "esp_h264_enc_single_hw.h"
 #include "repeat_policy.h"
+#include "slot_exchange.h"
 
 namespace esphome {
 namespace h264_encoder {
@@ -36,15 +37,17 @@ class SourceInput : public video::ImageSink {
 };
 
 // ESP32-P4 hardware H.264 encoder. Takes image frames from one of its
-// sources (on the source's task) and encodes them on its own task. A frame
-// already in the encoder's layout (RGB565 little-endian, both sizes a
-// multiple of 16, packed rows) is encoded from the source's buffer, held
-// until the hardware is done; other frames are converted into a DMA buffer.
-// One frame is in flight at a time; frames arriving meanwhile are dropped.
-// Nothing is encoded while no EncodedFrameSink wants frames, unless always_on
-// is set. A source slower
-// than min_fps has its frames copied, and the last one is encoded again to
-// keep the stream at min_fps (see RepeatPolicy).
+// sources (on the source's task) and encodes them on its own task. Frames
+// pass through three slots (SlotExchange), so neither task waits for the
+// other: the encoder encodes its slot while the source fills another. A
+// frame already in the encoder's layout (RGB565 little-endian, both sizes a
+// multiple of 16, packed rows) from a fast source is held, not copied, until
+// the hardware is done; other frames are converted into the slot's buffer.
+// If the encoder is still busy when a newer frame is ready, the older ready
+// frame is dropped. Nothing is encoded while no EncodedFrameSink wants
+// frames, unless always_on is set. A source slower than min_fps has its
+// frames copied, and the last one is encoded again to keep the stream at
+// min_fps (see RepeatPolicy).
 class H264Encoder : public Component {
  public:
   void setup() override;
@@ -96,10 +99,23 @@ class H264Encoder : public Component {
   bool consumers_want_frames_() const;
   static void task_entry_(void *arg);
   void task_loop_();
-  bool prepare_buffers_(uint16_t width, uint16_t height, esp_h264_raw_format_t type, bool convert);
-  void free_buffers_();
-  bool convert_(const video::ImageFrame &frame);
-  bool open_encoder_();
+  // One frame on its way to the encoder.
+  struct Slot {
+    uint8_t *buf{nullptr};  // conversion buffer, kept for reuse
+    uint32_t cap{0};
+    const uint8_t *data{nullptr};  // what to encode: buf, or a held source buffer
+    uint32_t len{0};
+    video::FrameRef held;  // the source's buffer, when not copied
+    uint16_t width{0};
+    uint16_t height{0};
+    esp_h264_raw_format_t type{ESP_H264_RAW_FMT_RGB565_LE};
+    uint32_t timestamp_ms{0};
+    bool copied{false};  // data is buf: can be encoded again (repeated)
+  };
+  static uint32_t raw_size_(uint16_t width, uint16_t height, esp_h264_raw_format_t type);
+  static void convert_(const video::ImageFrame &frame, uint8_t *dst);
+  bool prepare_output_(const Slot &slot);
+  bool open_encoder_(const Slot &slot);
   void close_encoder_();
   uint8_t target_fps_() const;
   void note_interval_(uint32_t ts);
@@ -119,25 +135,14 @@ class H264Encoder : public Component {
   std::atomic<uint8_t> active_source_{0};
   TaskHandle_t task_{nullptr};
 
-  // Hand-over between the source's task and the encoder task. While busy_
-  // is set the encoder task owns the fields below.
-  std::atomic<bool> busy_{false};
+  // Hand-over between the source's task and the encoder task: a slot is
+  // touched only by the side SlotExchange gives it to.
+  Slot slots_[SlotExchange::SLOTS];
+  SlotExchange exchange_;
   std::atomic<bool> keyframe_requested_{false};
   std::atomic<bool> was_active_{false};
-  video::FrameRef held_;        // zero-copy input, released after encoding
-  const uint8_t *in_ptr_{nullptr};
-  uint32_t in_len_{0};
-  uint8_t *in_buf_{nullptr};    // conversion buffer
-  uint32_t in_cap_{0};
-  uint8_t *out_buf_{nullptr};
-  uint32_t out_cap_{0};
-  uint16_t width_{0};
-  uint16_t height_{0};
-  uint16_t aligned_w_{0};
-  uint16_t aligned_h_{0};
-  esp_h264_raw_format_t type_{ESP_H264_RAW_FMT_RGB565_LE};
-  uint32_t frame_ts_{0};
-  // The conversion buffer holds the last source frame, ready to repeat.
+  // Cleared on a source switch or when nobody wants frames: the encoder's
+  // slot is not repeated until a new frame arrives.
   std::atomic<bool> repeatable_{false};
   std::atomic<uint32_t> last_source_ms_{0};
 
@@ -147,6 +152,9 @@ class H264Encoder : public Component {
   bool have_last_ts_{false};
 
   // Owned by the encoder task.
+  int front_{SlotExchange::NONE};  // the encoder's slot
+  uint8_t *out_buf_{nullptr};
+  uint32_t out_cap_{0};
   esp_h264_enc_handle_t enc_{nullptr};
   esp_h264_enc_param_hw_handle_t param_{nullptr};
   uint16_t enc_w_{0};

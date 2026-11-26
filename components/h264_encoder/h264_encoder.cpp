@@ -189,47 +189,16 @@ void H264Encoder::note_interval_(uint32_t ts) {
   this->have_last_ts_ = true;
 }
 
-void H264Encoder::free_buffers_() {
-  if (this->in_buf_ != nullptr)
-    esp_h264_free(this->in_buf_);
-  if (this->out_buf_ != nullptr)
-    esp_h264_free(this->out_buf_);
-  this->in_buf_ = this->out_buf_ = nullptr;
-  this->in_cap_ = this->out_cap_ = 0;
+uint32_t H264Encoder::raw_size_(uint16_t width, uint16_t height, esp_h264_raw_format_t type) {
+  return static_cast<uint32_t>(static_cast<float>(align16(width)) * align16(height) *
+                                   ESP_H264_GET_BPP_BY_PIC_TYPE(type) +
+                               0.5f);
 }
 
-bool H264Encoder::prepare_buffers_(uint16_t width, uint16_t height, esp_h264_raw_format_t type, bool convert) {
-  const uint16_t aw = align16(width), ah = align16(height);
-  const uint32_t need =
-      static_cast<uint32_t>(static_cast<float>(aw) * ah * ESP_H264_GET_BPP_BY_PIC_TYPE(type) + 0.5f);
-  if (this->width_ != width || this->height_ != height || this->type_ != type || this->out_cap_ < need)
-    this->free_buffers_();
-  // An encoded frame is far smaller than the raw one; the raw size is a safe bound.
-  if (this->out_buf_ == nullptr)
-    this->out_buf_ = static_cast<uint8_t *>(alloc_frame_buffer(need, &this->out_cap_));
-  // The conversion buffer only exists while frames need converting.
-  if (convert && this->in_buf_ == nullptr)
-    this->in_buf_ = static_cast<uint8_t *>(alloc_frame_buffer(need, &this->in_cap_));
-  if (this->out_buf_ == nullptr || (convert && this->in_buf_ == nullptr)) {
-    ESP_LOGE(TAG, "Out of memory for %ux%u frame buffers (%u bytes each)", width, height,
-             static_cast<unsigned>(need));
-    this->free_buffers_();
-    return false;
-  }
-  this->width_ = width;
-  this->height_ = height;
-  this->aligned_w_ = aw;
-  this->aligned_h_ = ah;
-  this->type_ = type;
-  this->in_len_ = need;
-  return true;
-}
-
-// Copies the frame into the conversion buffer in the encoder's layout,
-// padding to whole 16x16 macroblocks by repeating the last column and row.
-bool H264Encoder::convert_(const video::ImageFrame &f) {
-  const uint16_t w = f.width, h = f.height, aw = this->aligned_w_, ah = this->aligned_h_;
-  uint8_t *dst = this->in_buf_;
+// Copies the frame into dst in the encoder's layout, padding to whole 16x16
+// macroblocks by repeating the last column and row.
+void H264Encoder::convert_(const video::ImageFrame &f, uint8_t *dst) {
+  const uint16_t w = f.width, h = f.height, aw = align16(w), ah = align16(h);
   const uint32_t bpp = (f.format == ImageFormat::RGB888) ? 3 : 2;
   const uint32_t dst_stride = static_cast<uint32_t>(aw) * bpp;
   for (uint16_t y = 0; y < h; y++) {
@@ -267,7 +236,6 @@ bool H264Encoder::convert_(const video::ImageFrame &f) {
   }
   for (uint16_t y = h; y < ah; y++)
     std::memcpy(dst + y * dst_stride, dst + (h - 1) * dst_stride, dst_stride);
-  return true;
 }
 
 void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
@@ -282,13 +250,6 @@ void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
   if (!this->was_active_.exchange(true))
     this->keyframe_requested_ = true;  // resuming after idle: start with a keyframe
   this->note_interval_(f.timestamp_ms);
-
-  bool expected = false;
-  if (!this->busy_.compare_exchange_strong(expected, true)) {
-    this->dropped_frames_++;
-    return;
-  }
-  // From here the encoder task is idle and the hand-over fields are ours.
 
   const esp_h264_raw_format_t type =
       f.format == ImageFormat::RGB888 ? ESP_H264_RAW_FMT_BGR888 : ESP_H264_RAW_FMT_RGB565_LE;
@@ -306,57 +267,109 @@ void H264Encoder::handle_frame(uint8_t source, const video::ImageFrame &f) {
     if (!this->format_error_logged_.exchange(true))
       ESP_LOGE(TAG, "Cannot encode %ux%u %s frame: %s", f.width, f.height, format_name(f.format), problem);
     this->encode_errors_++;
-    this->busy_ = false;
     return;
   }
+
+  // A slot the encoder is not using; only this task touches it until
+  // finish_write().
+  const int index = this->exchange_.begin_write();
+  if (index == SlotExchange::NONE) {
+    this->dropped_frames_++;
+    return;
+  }
+  Slot &slot = this->slots_[index];
+  slot.held.reset();
   // A slow source's frame is copied even when it could be encoded in place:
   // the source reuses its buffer, and the copy is what gets repeated.
   const bool direct = f.format == ImageFormat::RGB565_LE && (f.width & 15) == 0 && (f.height & 15) == 0 &&
                       f.stride == static_cast<uint32_t>(f.width) * 2 &&
                       (reinterpret_cast<uintptr_t>(f.buffer.data()) & 15) == 0 &&
                       !this->repeat_.source_slow(this->interval_x16_.load());
-  if (!this->prepare_buffers_(f.width, f.height, type, !direct)) {
-    this->encode_errors_++;
-    this->busy_ = false;
-    return;
-  }
   if (direct) {
     // The hardware reads the source's buffer: write the CPU's view of it back
     // to memory, and hold the buffer until the encode is done.
     esp_cache_msync(f.buffer.data(), f.length(), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-    this->held_ = f.buffer;
-    this->in_ptr_ = f.buffer.data();
-    this->in_len_ = f.length();
+    slot.held = f.buffer;
+    slot.data = f.buffer.data();
+    slot.len = f.length();
+    slot.copied = false;
     this->zero_copy_++;
   } else {
-    this->convert_(f);
-    this->in_ptr_ = this->in_buf_;
+    const uint32_t need = raw_size_(f.width, f.height, type);
+    if (slot.cap < need) {
+      if (slot.buf != nullptr)
+        esp_h264_free(slot.buf);
+      slot.cap = 0;
+      slot.buf = static_cast<uint8_t *>(alloc_frame_buffer(need, &slot.cap));
+      if (slot.buf == nullptr) {
+        ESP_LOGE(TAG, "Out of memory for a %ux%u frame buffer (%u bytes)", f.width, f.height,
+                 static_cast<unsigned>(need));
+        slot.cap = 0;
+        this->encode_errors_++;
+        this->exchange_.abandon_write();
+        return;
+      }
+    }
+    convert_(f, slot.buf);
+    slot.data = slot.buf;
+    slot.len = need;
+    slot.copied = true;
   }
-  this->frame_ts_ = f.timestamp_ms;
-  this->repeatable_ = !direct && this->repeat_.enabled();
+  slot.width = f.width;
+  slot.height = f.height;
+  slot.type = type;
+  slot.timestamp_ms = f.timestamp_ms;
   this->last_source_ms_ = millis();
+  this->repeatable_ = true;
+  const int replaced = this->exchange_.finish_write(index);
+  if (replaced != SlotExchange::NONE) {
+    // The encoder had not taken the previous frame: drop it, and give back
+    // the source buffer it may hold.
+    this->slots_[replaced].held.reset();
+    this->exchange_.release_done();
+    this->dropped_frames_++;
+  }
   xTaskNotifyGive(this->task_);
 }
 
-// Called on the encoder task. Checked again once the hand-over is claimed.
+// Encoder task: whether its slot may be encoded again now or later.
 bool H264Encoder::repeat_ready_() const {
-  return this->repeat_.enabled() && this->repeatable_.load() && this->enc_ != nullptr &&
-         this->in_buf_ != nullptr && this->repeat_.may_repeat(millis(), this->last_source_ms_.load()) &&
-         this->consumers_want_frames_();
+  return this->repeat_.enabled() && this->front_ != SlotExchange::NONE && this->slots_[this->front_].copied &&
+         this->repeatable_.load() && this->enc_ != nullptr &&
+         this->repeat_.may_repeat(millis(), this->last_source_ms_.load()) && this->consumers_want_frames_();
 }
 
-bool H264Encoder::open_encoder_() {
+// Encoder task: an output buffer for the slot's size (an encoded frame is
+// far smaller than the raw one, so the raw size is a safe bound).
+bool H264Encoder::prepare_output_(const Slot &slot) {
+  const uint32_t need = raw_size_(slot.width, slot.height, slot.type);
+  if (this->out_cap_ >= need)
+    return true;
+  if (this->out_buf_ != nullptr)
+    esp_h264_free(this->out_buf_);
+  this->out_cap_ = 0;
+  this->out_buf_ = static_cast<uint8_t *>(alloc_frame_buffer(need, &this->out_cap_));
+  if (this->out_buf_ == nullptr) {
+    ESP_LOGE(TAG, "Out of memory for the %ux%u output buffer (%u bytes)", slot.width, slot.height,
+             static_cast<unsigned>(need));
+    this->out_cap_ = 0;
+    return false;
+  }
+  return true;
+}
+
+bool H264Encoder::open_encoder_(const Slot &slot) {
   const uint8_t fps = this->target_fps_();
   esp_h264_enc_cfg_hw_t cfg{};
-  cfg.pic_type = this->type_;
+  cfg.pic_type = slot.type;
   cfg.gop = this->gop_ != 0 ? this->gop_ : fps;
   cfg.fps = fps;
-  cfg.res.width = this->width_;
-  cfg.res.height = this->height_;
+  cfg.res.width = slot.width;
+  cfg.res.height = slot.height;
   // Automatic: about 1/8 bit per pixel per frame, at least 64 kbit/s.
   uint32_t bitrate = this->bitrate_;
   if (bitrate == 0) {
-    bitrate = static_cast<uint32_t>(this->width_) * this->height_ * fps / 8;
+    bitrate = static_cast<uint32_t>(slot.width) * slot.height * fps / 8;
     if (bitrate < 64000)
       bitrate = 64000;
   }
@@ -369,18 +382,17 @@ bool H264Encoder::open_encoder_() {
   if (err == ESP_H264_ERR_OK)
     err = esp_h264_enc_hw_get_param_hd(this->enc_, &this->param_);
   if (err != ESP_H264_ERR_OK) {
-    ESP_LOGE(TAG, "Hardware encoder setup failed (%d) for %ux%u", static_cast<int>(err), this->width_,
-             this->height_);
+    ESP_LOGE(TAG, "Hardware encoder setup failed (%d) for %ux%u", static_cast<int>(err), slot.width, slot.height);
     this->close_encoder_();
     return false;
   }
-  this->enc_w_ = this->width_;
-  this->enc_h_ = this->height_;
-  this->enc_type_ = this->type_;
+  this->enc_w_ = slot.width;
+  this->enc_h_ = slot.height;
+  this->enc_type_ = slot.type;
   this->enc_fps_ = fps;
   this->enc_opened_ms_ = millis();
   this->drifting_ = false;
-  ESP_LOGI(TAG, "Encoding %ux%u at %u fps%s, keyframe every %u frames, %u bit/s", this->width_, this->height_, fps,
+  ESP_LOGI(TAG, "Encoding %ux%u at %u fps%s, keyframe every %u frames, %u bit/s", slot.width, slot.height, fps,
            this->fps_ ? "" : " (measured)", static_cast<unsigned>(cfg.gop), static_cast<unsigned>(bitrate));
   return true;
 }
@@ -398,32 +410,35 @@ void H264Encoder::task_entry_(void *arg) { static_cast<H264Encoder *>(arg)->task
 
 void H264Encoder::task_loop_() {
   for (;;) {
-    // Wait for a source frame; with a repeatable frame, only until a repeat
-    // is due.
+    // Sleep until a source frame is ready or a repeat falls due. Nothing here
+    // waits for the source: a newer frame, if any, is simply taken.
     TickType_t wait = portMAX_DELAY;
-    if (this->repeat_ready_())
+    if (this->repeat_ready_()) {
       wait = pdMS_TO_TICKS(this->repeat_.wait_ms(millis(), this->last_out_ms_));
+      if (wait == 0)
+        wait = 1;  // never spin: let lower-priority tasks run between frames
+    }
+    ulTaskNotifyTake(pdTRUE, wait);
+
+    bool fresh = false;
+    this->front_ = this->exchange_.take(&fresh);
+    if (this->front_ == SlotExchange::NONE)
+      continue;
+    Slot &slot = this->slots_[this->front_];
     bool repeat = false;
-    if (ulTaskNotifyTake(pdTRUE, wait) != 0) {
-      if (!this->busy_.load())
-        continue;
+    uint32_t ts;
+    if (fresh) {
+      ts = slot.timestamp_ms;
     } else {
-      // A repeat is due. Claim the hand-over as a source frame would; if a
-      // source frame holds it, its notification follows.
-      bool expected = false;
-      if (!this->busy_.compare_exchange_strong(expected, true))
+      // No new frame: encode the last one again if a repeat is due.
+      if (!this->repeat_ready_() || this->repeat_.wait_ms(millis(), this->last_out_ms_) != 0)
         continue;
-      if (!this->repeat_ready_()) {
-        this->busy_ = false;
-        continue;
-      }
       repeat = true;
-      this->in_ptr_ = this->in_buf_;
-      this->frame_ts_ = this->last_out_ts_ + (millis() - this->last_out_ms_);
+      ts = this->last_out_ts_ + (millis() - this->last_out_ms_);
     }
 
     if (this->enc_ != nullptr &&
-        (this->enc_w_ != this->width_ || this->enc_h_ != this->height_ || this->enc_type_ != this->type_))
+        (this->enc_w_ != slot.width || this->enc_h_ != slot.height || this->enc_type_ != slot.type))
       this->close_encoder_();
     if (this->enc_ != nullptr && this->fps_ == 0) {
       // Measured rate drifted from the one the stream declares, and stayed
@@ -439,42 +454,50 @@ void H264Encoder::task_loop_() {
         this->close_encoder_();
       }
     }
+    if (!this->prepare_output_(slot)) {
+      this->encode_errors_++;
+      this->repeatable_ = false;
+      slot.held.reset();
+      continue;
+    }
     if (this->enc_ == nullptr) {
-      if (!this->open_encoder_()) {
+      if (!this->open_encoder_(slot)) {
         this->repeatable_ = false;
         this->encode_errors_++;
-        this->held_.reset();
-        this->busy_ = false;
+        slot.held.reset();
         continue;
       }
       this->keyframe_requested_ = false;  // a new encoder starts with an IDR anyway
     }
     if (this->keyframe_requested_.exchange(false) && this->param_ != nullptr)
       esp_h264_enc_force_idr(&this->param_->base);
-    this->frame_ts_ = next_timestamp(this->frame_ts_, this->last_out_ts_, this->have_out_ts_);
+    ts = next_timestamp(ts, this->last_out_ts_, this->have_out_ts_);
 
     esp_h264_enc_in_frame_t in{};
-    in.raw_data.buffer = const_cast<uint8_t *>(this->in_ptr_);
-    in.raw_data.len = this->in_len_;
-    in.pts = this->frame_ts_;
+    in.raw_data.buffer = const_cast<uint8_t *>(slot.data);
+    in.raw_data.len = slot.len;
+    in.pts = ts;
     esp_h264_enc_out_frame_t out{};
     out.raw_data.buffer = this->out_buf_;
     out.raw_data.len = this->out_cap_;
 
     const esp_h264_err_t err = esp_h264_enc_process(this->enc_, &in, &out);
-    this->held_.reset();  // the source may reuse its buffer now
+    if (!slot.copied) {
+      // A held source buffer goes back to the source; it cannot be repeated.
+      slot.held.reset();
+      slot.data = nullptr;
+    }
     if (err != ESP_H264_ERR_OK || out.length == 0) {
       // No repeats of a frame that failed: they would come back at once.
       this->repeatable_ = false;
       this->encode_errors_++;
       if (this->encode_errors_.load() <= 3)
         ESP_LOGW(TAG, "Encode failed (%d)", static_cast<int>(err));
-      this->busy_ = false;
       continue;
     }
     const bool keyframe = out.frame_type == ESP_H264_FRAME_TYPE_IDR;
     this->last_out_ms_ = millis();
-    this->last_out_ts_ = this->frame_ts_;
+    this->last_out_ts_ = ts;
     this->have_out_ts_ = true;
     if (repeat)
       this->repeats_++;
@@ -483,8 +506,7 @@ void H264Encoder::task_loop_() {
     if (keyframe)
       this->keyframes_++;
     for (auto *s : this->sinks_)
-      s->on_encoded_frame(out.raw_data.buffer, out.length, this->frame_ts_, keyframe);
-    this->busy_ = false;
+      s->on_encoded_frame(out.raw_data.buffer, out.length, ts, keyframe);
   }
 }
 

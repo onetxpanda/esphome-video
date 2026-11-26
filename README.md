@@ -542,11 +542,15 @@ and drops frames instead of stopping the device.
   sends commands.
 - `isp` has its own task. Only the newest frame waits for it; older frames
   are dropped. The `overlay` and the outputs it feeds run on this task.
-- `h264_encoder` encodes on its own task, one frame at a time. Frames that
-  arrive while it is busy are dropped. A frame already in the encoder's
-  layout (RGB565 little-endian, both sizes a multiple of 16, packed rows) is
-  encoded straight from the producer's buffer, held until the hardware is
-  done. Any other frame is first converted into a padded buffer. Without a
+- `h264_encoder` encodes on its own task, one frame at a time. Frames reach
+  it through three slots, so neither side waits for the other: the encoder
+  encodes (or repeats) its slot while the producer fills another, and takes
+  the newest finished frame next; an older finished frame it never took is
+  dropped. A frame already in the encoder's layout (RGB565 little-endian,
+  both sizes a multiple of 16, packed rows) from a producer at `min_fps` or
+  faster is encoded straight from the producer's buffer, held until the
+  hardware is done. Any other frame is first converted into the slot's
+  padded buffer. Without a
   configured `fps`, the encoder declares the measured source rate in the
   stream. If that rate later stays more than 25% off for 3 s, it restarts the
   stream with a keyframe.
