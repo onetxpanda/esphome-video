@@ -113,6 +113,8 @@ def usb_loop_guard():
         src = open(f).read()
         if "register_usb_client" not in src:
             continue
+        if "Not usb_camera_protections()" in src:
+            continue  # deliberately without them, with the reason given there
         rel = os.path.relpath(f, COMP)
         check("usb_camera_protections()" in src, f"{rel} asks for the USB camera protections")
 

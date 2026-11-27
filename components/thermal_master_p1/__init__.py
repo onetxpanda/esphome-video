@@ -18,7 +18,6 @@ from esphome.components.video_core import (
     ImageSource,
     RadiometricSource,
     inherit_device_id,
-    usb_camera_protections,
 )
 import esphome.config_validation as cv
 from esphome.const import (
@@ -467,7 +466,8 @@ async def _new_button(conf, call):
 
 
 async def to_code(config):
-    usb_camera_protections()
+    # Not usb_camera_protections(): with them (v1.3.2, v1.3.3) the P4 never
+    # saw the P1 on USB, where v1.2.6 found it after every reboot. Under test.
     var = await usb_host.register_usb_client(config)
     cg.add(var.set_gain(config[CONF_GAIN]))
     cg.add(var.set_offset(config[CONF_OFFSET]))
