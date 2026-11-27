@@ -1262,12 +1262,13 @@ void ThermalMasterP1::task_loop_() {
       ms = this->pending_ms_;
     }
     if (raw) {
-      // Its sinks (a radiometric stage's filters) run here too. Rest as long
-      // as the frame took, at least a tick, so this task takes at most half a
-      // core whatever they cost (frames meanwhile are dropped, as before).
-      const uint32_t t0 = millis();
+      // Its sinks (a radiometric stage's filters) run here too. One tick's
+      // rest after each frame, so lower-priority tasks always get the core
+      // even if processing ever takes longer than a frame. (Resting as long
+      // as the frame took, as before, passed on only 7 of the camera's 25
+      // frames a second.)
       this->process_(raw, ms);
-      vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(millis() - t0)));
+      vTaskDelay(1);
     }
   }
 }
