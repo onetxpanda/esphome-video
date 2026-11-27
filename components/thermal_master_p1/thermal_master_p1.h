@@ -291,7 +291,7 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   video::SinkList<video::ImageSink> img_sinks_;
 
   // Configuration and options.
-  uint8_t num_transfers_{4};
+  uint8_t num_transfers_{2};
   bool log_timing_{false};
   bool shutter_after_start_{false};
   uint32_t poll_ms_{60000}, heartbeat_ms_{0};

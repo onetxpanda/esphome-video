@@ -32,9 +32,10 @@ static constexpr uint8_t REQ_SET_INTERFACE = 0x0B;
 static constexpr uint8_t STREAM_INTERFACE = 1;
 static constexpr uint8_t STREAM_ALT = 1;
 static constexpr uint8_t BULK_IN_EP = 0x81;
-// A whole number of 512-byte packets; a frame's rows end with a short packet
-// and its end marker comes as a transfer of its own.
-static constexpr size_t TRANSFER_BYTES = 16 * 512;
+// A whole frame (start marker and rows) per transfer, as the vendor app reads
+// it, rounded up to whole 512-byte packets: the rows end with a short packet,
+// which ends the transfer, and the end marker comes as a transfer of its own.
+static constexpr size_t TRANSFER_BYTES = (BODY_BYTES + 511) / 512 * 512;  // 77,824
 static constexpr size_t RAW_FRAMES = 3;  // assembling, waiting, processing
 static constexpr size_t RAD_FRAMES = 4;  // stages after this one may hold frames
 static constexpr size_t IMG_FRAMES = 4;
@@ -266,20 +267,35 @@ void ThermalMasterP1::queue_init_() {
   int32_t range = this->initial_set_[ri] ? this->initial_[ri] : 1;
   if (range == RANGE_AUTO)
     range = 1;  // the votes take it from there
-  this->range_changing_ = true;
-  critical(this->make_job_(
-      "set the range", setting_write(Setting::RANGE, range), [this, range](bool, const std::vector<uint8_t> &) {
-        ESP_LOGI(TAG, "Camera started: model \"%s\", firmware %s, system %s; range read 0x%02X", this->model_.c_str(),
-                 this->firmware_.c_str(), this->system_version_.c_str(), this->start_answer_);
-        if (this->model_ != "P1")
-          ESP_LOGW(TAG, "The camera calls itself \"%s\", not P1; frames are read as a P1's", this->model_.c_str());
-        this->note_range_(range);
-        this->stage_ = Stage::STREAM;
-        this->stream_started_ms_ = millis();
-        this->set_status_("Starting the stream");
-        this->queue_range_settle_(0);
-        this->queue_after_start_();
-      }));
+  // The range is written only when the camera is not in it already: a range
+  // change makes the camera reinitialise its measurement (the vendor app gives
+  // it 22 s), and the app never sends one on connecting.
+  Job started;
+  started.what = "start";
+  started.steps = {{Op::WAIT, {}, 0, 0}};
+  started.done = [this, range](bool, const std::vector<uint8_t> &) {
+    ESP_LOGI(TAG, "Camera started: model \"%s\", firmware %s, system %s; range read 0x%02X", this->model_.c_str(),
+             this->firmware_.c_str(), this->system_version_.c_str(), this->start_answer_);
+    if (this->model_ != "P1")
+      ESP_LOGW(TAG, "The camera calls itself \"%s\", not P1; frames are read as a P1's", this->model_.c_str());
+    this->stage_ = Stage::STREAM;
+    this->stream_started_ms_ = millis();
+    this->set_status_("Starting the stream");
+    if (this->range_now_.load() != range) {
+      ESP_LOGI(TAG, "Setting the range: %s", range == 1 ? "high" : "low");
+      this->range_changing_ = true;
+      this->jobs_.push_back(this->make_job_("set the range", setting_write(Setting::RANGE, range),
+                                            [this, range](bool ok, const std::vector<uint8_t> &) {
+                                              if (ok)
+                                                this->note_range_(range);
+                                              this->queue_range_settle_(0);
+                                            }));
+    } else {
+      this->range_changing_ = false;
+    }
+    this->queue_after_start_();
+  };
+  critical(std::move(started));
 }
 
 // After a start: the configured settings, what the entities show, the
@@ -1372,9 +1388,6 @@ void ThermalMasterP1::report_(uint32_t now) {
                  longs = this->long_.exchange(0), bad_marker = this->bad_marker_.exchange(0),
                  nobuf = this->no_buffer_.exchange(0), us = this->process_us_.exchange(0),
                  unreadable = this->unreadable_.exchange(0);
-  const uint32_t skipped_total = this->skipped_total_.load();
-  const uint32_t skipped = skipped_total - this->last_skipped_;
-  this->last_skipped_ = skipped_total;
   if (unreadable > 0)
     ESP_LOGW(TAG, "%u frames carried no temperatures (every value under 200 K) in the high range",
              static_cast<unsigned>(unreadable));
@@ -1383,11 +1396,11 @@ void ThermalMasterP1::report_(uint32_t now) {
   const float s = elapsed / 1000.0f;
   ESP_LOGI(TAG,
            "Over %.1f s: %.2f frames/s from the camera, %.2f temperature frames/s passed on (%.2f ms each), "
-           "%.2f pictures/s, %u dropped (processing behind), %u skipped by the camera, %u short, %u long (a "
-           "shutter cycle), %u bad markers, %u transfer errors, %u without a buffer; centre %.2f C, %u pixels "
+           "%.2f pictures/s, %u dropped (processing behind), %u short, %u longer than a frame, %u bad markers, "
+           "%u transfer errors, %u without a buffer; centre %.2f C, %u pixels "
            "without a reading (or under the low range); %s range; %u commands queued",
            s, frames / s, images / s, images ? us / 1000.0f / images : 0.0f, pictures / s,
-           static_cast<unsigned>(dropped), static_cast<unsigned>(skipped), static_cast<unsigned>(shorts),
+           static_cast<unsigned>(dropped), static_cast<unsigned>(shorts),
            static_cast<unsigned>(longs), static_cast<unsigned>(bad_marker), static_cast<unsigned>(errors),
            static_cast<unsigned>(nobuf), this->centre_.load(), static_cast<unsigned>(this->bad_pixels_.load()),
            this->range_now_ == 1 ? "high" : (this->range_now_ == 0 ? "low" : "unknown"),

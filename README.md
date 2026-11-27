@@ -434,8 +434,8 @@ isp:
   `offset` (in °C: a difference, so Home Assistant does not convert it),
   `shutter` (button). Sensors: `streaming`, `status`.
 - **thermal_master_p1**: `gain` (default 1), `offset` (°C, default 0),
-  `transfers` (bulk transfers kept queued, 8 KB of internal RAM each, default
-  4), `update_interval` (readings, default 60 s), `heartbeat_interval` (the
+  `transfers` (bulk transfers kept queued, each a whole frame, 76 KB of
+  internal RAM each, default 2, at most 3), `update_interval` (readings, default 60 s), `heartbeat_interval` (the
   library's keepalive; off unless set: the vendor app sends none to a P1),
   `camera_point` (`x`, `y`: the point `camera_point_temperature` reads; the
   centre by default), `settings` (written at every start; the keys below, in
@@ -742,7 +742,9 @@ one the camera does not answer restarts the camera.
 On connection: interface 1 to alternate setting 0 (in case it was left
 streaming), the camera's name, firmware and system version, the range read,
 1 s, interface 1 alternate setting 1 (bulk IN 0x81), the vendor request
-0xEE, 2 s, bulk transfers queued, the range read again, then the range.
+0xEE, 2 s, bulk transfers queued, the range read again, then the range only
+if the camera is not in it already (a range change reinitialises the
+camera's measurement; the vendor app never sends one on connecting).
 That is the Windows tool's sequence (without its delays the camera takes
 every command and sends nothing); the vendor's Android app only selects the
 interface, sends 0xEE and queues its reads. After a range change the
@@ -750,8 +752,8 @@ camera's state (0x830101) is read every second while it says the change is
 under way, then the range is read back. A frame arrives as a 12-byte start
 marker (a UVC payload header), 242 rows of 160 16-bit words (the camera's
 YUYV picture, two metadata rows, then the temperatures), ending in a short
-packet, and a 12-byte end marker as a transfer of its own; four 8 KB
-transfers stay queued. A frame is kept when its end marker comes exactly
+packet, and a 12-byte end marker as a transfer of its own; whole-frame
+transfers (77,824 bytes) stay queued, as the vendor app reads them. A frame is kept when its end marker comes exactly
 after its rows, with start and end markers matching (sync bytes 0x8C/0x8D
 and 0x8E/0x8F, the same frame counter). An end marker anywhere else ends a
 frame joined part way, and a frame longer than a frame (the one after a

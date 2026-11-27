@@ -389,8 +389,9 @@ CONFIG_SCHEMA = cv.All(
             # to match a reference.
             cv.Optional(CONF_GAIN, default=1.0): cv.float_range(min=0.1, max=10.0),
             cv.Optional(CONF_OFFSET, default=0.0): cv.float_range(min=-50.0, max=50.0),
-            # Bulk transfers kept queued (8 KB of internal RAM each).
-            cv.Optional(CONF_TRANSFERS, default=4): cv.int_range(min=2, max=8),
+            # Bulk transfers kept queued, each a whole frame (76 KB of internal
+            # RAM each), as the vendor app reads them.
+            cv.Optional(CONF_TRANSFERS, default=2): cv.int_range(min=2, max=3),
             # Camera settings written at every start (then read back). Auto
             # shutter and sun detection are on unless set here.
             cv.Optional(CONF_SETTINGS, default={}): cv.Schema(
