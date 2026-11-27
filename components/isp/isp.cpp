@@ -308,7 +308,17 @@ void Isp::task_loop_() {
       this->last_ts_ = f.timestamp_ms;
       this->have_last_ts_ = true;
     }
+    const uint32_t t0 = millis();
     this->process_(f, o, scaler, spots.data(), spot_count, refresh);
+    // Rest as long as the frame took, at least a tick, before the next one:
+    // the ISP then takes at most half a core whatever its settings. Frames
+    // arriving faster than it can process them were dropping already; without
+    // the rest, a 25 frames/s camera with costly settings (CPU bicubic to
+    // 640x480) kept this task busy without a break until the task watchdog
+    // reset the chip.
+    const uint32_t took = millis() - t0;
+    this->busy_ms_ += took;
+    vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(took)));
   }
 }
 
@@ -519,7 +529,7 @@ void Isp::loop() {
   this->last_report_ms_ = now;
   const uint32_t n = this->frames_.exchange(0), d = this->dropped_.exchange(0), nb = this->no_buffer_.exchange(0);
   const uint32_t tone = this->tone_us_.exchange(0), scale = this->scale_us_.exchange(0),
-                 sink = this->sink_us_.exchange(0);
+                 sink = this->sink_us_.exchange(0), busy = this->busy_ms_.exchange(0);
   auto avg = [n](uint32_t us) { return n ? us / 1000.0f / n : 0.0f; };
   Scaler scaler;
   {
@@ -527,10 +537,10 @@ void Isp::loop() {
     scaler = this->scaler_;
   }
   ESP_LOGI(TAG,
-           "Over %.1f s: %.2f frames/s, %u superseded, %u without a free buffer. Per frame: tone map %.2f ms, "
-           "scale (%s) %.2f ms, sinks %.2f ms",
-           elapsed / 1000.0f, n * 1000.0f / elapsed, static_cast<unsigned>(d), static_cast<unsigned>(nb), avg(tone),
-           scaler == Scaler::PPA ? "PPA" : "CPU", avg(scale), avg(sink));
+           "Over %.1f s: %.2f frames/s, %u superseded, %u without a free buffer, %.0f%% of a core. Per frame: tone "
+           "map %.2f ms, scale (%s) %.2f ms, sinks %.2f ms",
+           elapsed / 1000.0f, n * 1000.0f / elapsed, static_cast<unsigned>(d), static_cast<unsigned>(nb),
+           busy * 100.0f / elapsed, avg(tone), scaler == Scaler::PPA ? "PPA" : "CPU", avg(scale), avg(sink));
 }
 
 }  // namespace isp

@@ -151,6 +151,7 @@ class Isp : public Component,
   bool log_timing_{false};
   std::atomic<uint32_t> frames_{0}, dropped_{0}, no_buffer_{0};
   std::atomic<uint32_t> tone_us_{0}, scale_us_{0}, sink_us_{0};
+  std::atomic<uint32_t> busy_ms_{0};  // processing time, for the share of a core
   uint32_t last_report_ms_{0};
 };
 

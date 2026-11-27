@@ -1155,8 +1155,14 @@ void ThermalMasterP1::task_loop_() {
       raw = std::move(this->pending_);
       ms = this->pending_ms_;
     }
-    if (raw)
+    if (raw) {
+      // Its sinks (a radiometric stage's filters) run here too. Rest as long
+      // as the frame took, at least a tick, so this task takes at most half a
+      // core whatever they cost (frames meanwhile are dropped, as before).
+      const uint32_t t0 = millis();
       this->process_(raw, ms);
+      vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(millis() - t0)));
+    }
   }
 }
 
