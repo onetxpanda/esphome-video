@@ -15,6 +15,7 @@ MULTI_CONF = True
 
 CONF_CAMERAS = "cameras"
 CONF_CAMERA = "camera"
+CONF_WAIT_FOR_API = "wait_for_api"
 
 ns = cg.esphome_ns.namespace("camera_switch")
 CameraSwitch = ns.class_("CameraSwitch", cg.Component, RadiometricSource)
@@ -48,6 +49,9 @@ CONFIG_SCHEMA = cv.All(
             # Longer than the slowest camera's frame interval (an MLX90640 at
             # 0.5 Hz in merge mode sends one every 4 s).
             cv.Optional(CONF_TIMEOUT, default="10s"): cv.positive_time_period_milliseconds,
+            # Diagnostics: pass no frames on until a Home Assistant client has
+            # been connected for 10 s, so a fault in the chain shows in its logs.
+            cv.Optional(CONF_WAIT_FOR_API, default=False): cv.boolean,
             # Text sensor: the camera in use, or "None".
             cv.Optional(CONF_CAMERA): text_sensor.text_sensor_schema(icon="mdi:camera"),
         }
@@ -63,6 +67,7 @@ async def to_code(config):
         source = await cg.get_variable(cam[CONF_SOURCE])
         cg.add(var.add_camera(cam[CONF_NAME], source))
     cg.add(var.set_timeout(config[CONF_TIMEOUT]))
+    cg.add(var.set_wait_for_api(config[CONF_WAIT_FOR_API]))
     if CONF_CAMERA in config:
         sens = await text_sensor.new_text_sensor(config[CONF_CAMERA])
         cg.add(var.set_camera_text_sensor(sens))

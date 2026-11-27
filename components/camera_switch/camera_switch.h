@@ -48,6 +48,7 @@ class CameraSwitch : public Component, public video::RadiometricSource {
   // Code generation: the cameras in order of preference.
   void add_camera(const char *name, video::RadiometricSource *source);
   void set_timeout(uint32_t ms) { this->timeout_ms_ = ms; }
+  void set_wait_for_api(bool v) { this->wait_for_api_ = v; }
 #ifdef USE_TEXT_SENSOR
   void set_camera_text_sensor(text_sensor::TextSensor *s) { this->camera_sensor_ = s; }
 #endif
@@ -67,6 +68,11 @@ class CameraSwitch : public Component, public video::RadiometricSource {
   uint32_t timeout_ms_{10000};
   uint32_t last_check_ms_{0};
   bool published_{false};
+  bool wait_for_api_{false};
+  uint32_t api_since_ms_{0};
+  std::atomic<bool> passing_{false};  // frames go on to the chain
+  std::atomic<uint32_t> passed_{0};   // frames passed on, for the diagnostic log
+  uint32_t passing_since_ms_{0};
   // Frames of two cameras (both plugged in) reach the chain one at a time; a
   // frame arriving while another is delivered is dropped, not waited for.
   std::mutex deliver_mutex_;

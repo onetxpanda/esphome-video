@@ -2,6 +2,9 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#ifdef USE_API
+#include "esphome/components/api/api_server.h"
+#endif
 
 namespace esphome {
 namespace camera_switch {
@@ -41,13 +44,14 @@ void CameraSwitch::handle_frame(uint8_t index, const video::RadiometricFrame &fr
     return;
   this->last_ms_[index].store(millis());
   this->seen_[index].store(true);
-  if (static_cast<int>(index) != this->active_.load())
+  if (static_cast<int>(index) != this->active_.load() || !this->passing_.load())
     return;
   std::unique_lock<std::mutex> lock(this->deliver_mutex_, std::try_to_lock);
   if (!lock.owns_lock())
     return;
   this->sinks_.deliver(frame,
                        [](video::RadiometricSink *s, const video::RadiometricFrame &f) { s->on_radiometric_frame(f); });
+  this->passed_++;
 }
 
 void CameraSwitch::loop() {
@@ -55,6 +59,32 @@ void CameraSwitch::loop() {
   if (now - this->last_check_ms_ < CHECK_MS && this->published_)
     return;
   this->last_check_ms_ = now;
+  if (!this->passing_.load()) {
+    bool go = !this->wait_for_api_;
+#ifdef USE_API
+    if (!go) {
+      if (api::global_api_server == nullptr || !api::global_api_server->is_connected()) {
+        this->api_since_ms_ = 0;
+      } else if (this->api_since_ms_ == 0) {
+        this->api_since_ms_ = now;
+      } else {
+        go = now - this->api_since_ms_ >= 10000;
+      }
+    }
+#else
+    go = true;
+#endif
+    if (go) {
+      if (this->wait_for_api_)
+        ESP_LOGW(TAG, "Home Assistant connected for 10 s: passing camera frames on to the chain now");
+      this->passing_since_ms_ = now;
+      this->passing_.store(true);
+    }
+  } else if (this->wait_for_api_ && now - this->passing_since_ms_ <= 120000) {
+    // Diagnostics: the chain's progress twice a second for its first 2 minutes.
+    ESP_LOGW(TAG, "Chain running %.1f s: %u frames passed on", (now - this->passing_since_ms_) / 1000.0f,
+             static_cast<unsigned>(this->passed_.load()));
+  }
   uint32_t last[MAX_CAMERAS];
   bool seen[MAX_CAMERAS];
   const size_t n = this->names_.size();
