@@ -60,6 +60,7 @@ usb_host:
 
 thermal_master_p1:
   id: p1
+  shutter_after_start: true
   controls:
     shutter:
       name: "P1 Shutter"

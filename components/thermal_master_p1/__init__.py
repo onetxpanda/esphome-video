@@ -60,6 +60,7 @@ CONF_STREAMING = "streaming"
 CONF_STATUS = "status"
 CONF_LOG_TIMING = "log_timing"
 CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
+CONF_SHUTTER_AFTER_START = "shutter_after_start"
 CONF_CAMERA_POINT = "camera_point"
 CONF_CAMERA_MAX = "camera_max_temperature"
 CONF_CAMERA_MIN = "camera_min_temperature"
@@ -394,6 +395,10 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_UPDATE_INTERVAL, default="60s"): cv.positive_time_period_milliseconds,
             # The library's keepalive; off unless set (the vendor app sends none to a P1).
             cv.Optional(CONF_HEARTBEAT_INTERVAL): cv.positive_time_period_milliseconds,
+            # A shutter cycle as soon as the camera has started (each start,
+            # including the restarts after the stream stops): the
+            # temperatures otherwise read low until its own next one.
+            cv.Optional(CONF_SHUTTER_AFTER_START, default=False): cv.boolean,
             # The point camera_point_temperature reads (the camera's own measurement); the centre by default.
             cv.Optional(CONF_CAMERA_POINT): cv.Schema(
                 {cv.Required(CONF_X): cv.int_range(min=0, max=159), cv.Required(CONF_Y): cv.int_range(min=0, max=119)}
@@ -474,6 +479,7 @@ async def to_code(config):
     cg.add(var.set_transfers(config[CONF_TRANSFERS]))
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
     cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
+    cg.add(var.set_shutter_after_start(config[CONF_SHUTTER_AFTER_START]))
     if CONF_HEARTBEAT_INTERVAL in config:
         cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
     for key, value in config[CONF_SETTINGS].items():

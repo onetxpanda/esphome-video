@@ -159,6 +159,7 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   void set_offset(float v) { this->offset_ = v; }
   void set_transfers(uint8_t n) { this->num_transfers_ = n; }
   void set_log_timing(bool v) { this->log_timing_ = v; }
+  void set_shutter_after_start(bool v) { this->shutter_after_start_ = v; }
   void set_update_interval(uint32_t ms) { this->poll_ms_ = ms; }
   void set_heartbeat_interval(uint32_t ms) { this->heartbeat_ms_ = ms; }
 
@@ -278,6 +279,7 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   // Configuration and options.
   uint8_t num_transfers_{4};
   bool log_timing_{false};
+  bool shutter_after_start_{false};
   uint32_t poll_ms_{60000}, heartbeat_ms_{0};
   std::atomic<float> gain_{1.0f}, offset_{0.0f};
   int32_t initial_[static_cast<size_t>(Setting::COUNT)]{};

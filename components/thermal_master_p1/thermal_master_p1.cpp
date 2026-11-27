@@ -275,6 +275,14 @@ void ThermalMasterP1::queue_init_() {
 // After a start: the configured settings, what the entities show, the
 // camera's limits and texts, the heartbeat, the first readings.
 void ThermalMasterP1::queue_after_start_() {
+  if (this->shutter_after_start_) {
+    // A shutter cycle (offset update, the vendor app's shutter button) first:
+    // after a start the temperatures read several degrees low until the
+    // camera's own next shutter cycle. Queued directly, so a full queue
+    // cannot drop it.
+    ESP_LOGI(TAG, "Command: %s (after the start)", action_name(Action::SHUTTER));
+    this->jobs_.push_back(this->make_job_(action_name(Action::SHUTTER), action_command(Action::SHUTTER)));
+  }
   this->publish_text_(this->info_texts_[static_cast<size_t>(Info::NAME)], this->model_);
   this->publish_text_(this->info_texts_[static_cast<size_t>(Info::FIRMWARE)], this->firmware_);
   this->publish_text_(this->info_texts_[static_cast<size_t>(Info::SYSTEM_VERSION)], this->system_version_);
