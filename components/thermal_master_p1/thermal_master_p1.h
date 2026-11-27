@@ -259,6 +259,7 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
 
   // USB task.
   static void transfer_done_(usb_transfer_t *t);
+  static void control_done_(usb_transfer_t *t);
   void on_transfer_(usb_transfer_t *t);
 
   // Processing task.
@@ -323,7 +324,14 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   // Control transfer in flight (one at a time); completions of abandoned ones are ignored.
   std::atomic<uint8_t> ctrl_state_{CTRL_IDLE};
   std::atomic<uint32_t> ctrl_gen_{0};
-  uint8_t ctrl_resp_[64]{};
+  // Control requests go on this component's own transfer: the USB host
+  // component's shared control buffers hold only 56 data bytes, and the
+  // camera's device information answers are up to 64.
+  static constexpr size_t CTRL_MAX_DATA = 256;
+  usb_transfer_t *ctrl_xfer_{nullptr};
+  std::atomic<bool> ctrl_inflight_{false};
+  uint32_t ctrl_xfer_gen_{0};  // the request the transfer in flight belongs to
+  uint8_t ctrl_resp_[CTRL_MAX_DATA]{};
   size_t ctrl_resp_len_{0};
   uint32_t ctrl_sent_ms_{0};
 

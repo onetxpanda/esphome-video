@@ -720,30 +720,75 @@ void ThermalMasterP1::fail_(const char *what) {
   this->goto_stage_(Stage::BACKOFF, delay);
 }
 
+// One control request at a time, on this component's own transfer. An IN
+// request's length is the length of `data`.
 bool ThermalMasterP1::send_control_(uint8_t type, uint8_t request, uint16_t value, uint16_t index,
                                     std::vector<uint8_t> data) {
   const uint32_t gen = ++this->ctrl_gen_;
   this->ctrl_state_.store(CTRL_PENDING);
   this->ctrl_sent_ms_ = millis();
-  // An IN request's length is the length of `data`.
-  const bool ok = this->control_transfer(
-      type, request, value, index,
-      [this, gen](const usb_host::TransferStatus &st) {  // the USB task
-        if (gen != this->ctrl_gen_.load())
-          return;
-        size_t n = 0;
-        if (st.success && st.data_len > usb_host::SETUP_PACKET_SIZE) {
-          n = std::min(st.data_len - usb_host::SETUP_PACKET_SIZE, sizeof(this->ctrl_resp_));
-          std::memcpy(this->ctrl_resp_, st.data + usb_host::SETUP_PACKET_SIZE, n);
-        }
-        this->ctrl_resp_len_ = n;
-        this->ctrl_state_.store(st.success ? CTRL_OK : CTRL_FAILED);
-        App.wake_loop_threadsafe();
-      },
-      data);
-  if (!ok)
+  if (data.size() > CTRL_MAX_DATA) {
+    ESP_LOGE(TAG, "Control request of %u bytes is over %u", static_cast<unsigned>(data.size()),
+             static_cast<unsigned>(CTRL_MAX_DATA));
     this->ctrl_state_.store(CTRL_FAILED);
-  return ok;
+    return false;
+  }
+  if (this->ctrl_inflight_.load()) {
+    // The last request never came back (the camera stopped answering); its
+    // transfer cannot be reused until it does, or the camera goes away.
+    ESP_LOGW(TAG, "The last control request has not come back yet");
+    this->ctrl_state_.store(CTRL_FAILED);
+    return false;
+  }
+  if (this->ctrl_xfer_ == nullptr &&
+      usb_host_transfer_alloc(usb_host::SETUP_PACKET_SIZE + CTRL_MAX_DATA, 0, &this->ctrl_xfer_) != ESP_OK) {
+    ESP_LOGE(TAG, "No memory for a control transfer");
+    this->ctrl_xfer_ = nullptr;
+    this->ctrl_state_.store(CTRL_FAILED);
+    return false;
+  }
+  usb_transfer_t *t = this->ctrl_xfer_;
+  auto *setup = reinterpret_cast<usb_setup_packet_t *>(t->data_buffer);
+  setup->bmRequestType = type;
+  setup->bRequest = request;
+  setup->wValue = value;
+  setup->wIndex = index;
+  setup->wLength = static_cast<uint16_t>(data.size());
+  if (!(type & USB_BM_REQUEST_TYPE_DIR_IN) && !data.empty())
+    std::memcpy(t->data_buffer + usb_host::SETUP_PACKET_SIZE, data.data(), data.size());
+  t->num_bytes = static_cast<int>(usb_host::SETUP_PACKET_SIZE + data.size());
+  t->device_handle = this->device_handle_;
+  t->bEndpointAddress = 0;
+  t->callback = ThermalMasterP1::control_done_;
+  t->context = this;
+  t->timeout_ms = 0;
+  this->ctrl_xfer_gen_ = gen;
+  this->ctrl_inflight_.store(true);
+  const esp_err_t err = usb_host_transfer_submit_control(this->handle_, t);
+  if (err != ESP_OK) {
+    this->ctrl_inflight_.store(false);
+    ESP_LOGW(TAG, "Cannot send a control request: %s", esp_err_to_name(err));
+    this->ctrl_state_.store(CTRL_FAILED);
+    return false;
+  }
+  return true;
+}
+
+// The USB task: a control request came back (or failed, or the camera went).
+void ThermalMasterP1::control_done_(usb_transfer_t *t) {
+  auto *self = static_cast<ThermalMasterP1 *>(t->context);
+  const bool ok = t->status == USB_TRANSFER_STATUS_COMPLETED;
+  if (self->ctrl_xfer_gen_ == self->ctrl_gen_.load()) {   // not an abandoned request
+    size_t n = 0;
+    if (ok && t->actual_num_bytes > static_cast<int>(usb_host::SETUP_PACKET_SIZE)) {
+      n = std::min<size_t>(t->actual_num_bytes - usb_host::SETUP_PACKET_SIZE, sizeof(self->ctrl_resp_));
+      std::memcpy(self->ctrl_resp_, t->data_buffer + usb_host::SETUP_PACKET_SIZE, n);
+    }
+    self->ctrl_resp_len_ = n;
+    self->ctrl_state_.store(ok ? CTRL_OK : CTRL_FAILED);
+  }
+  self->ctrl_inflight_.store(false);
+  App.wake_loop_threadsafe();
 }
 
 bool ThermalMasterP1::start_step_(const Step &s) {
