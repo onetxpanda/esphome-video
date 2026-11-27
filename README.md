@@ -814,7 +814,7 @@ calibrate) are written to the camera terminal's Zoom (Absolute) control. The
 camera cannot report its mode, so after every stream start the component
 sends the configured mode, range and palette, and passes frames on only
 once the camera has accepted the mode. After a mode or range change it skips
-5 frames. If no complete frame arrives for 3 s, it restarts the stream.
+5 frames. If no complete frame arrives for 10 s, it restarts the stream (a shutter cycle pauses the frames for several seconds; each pause of 1 s or more is logged).
 
 The camera never does a shutter calibration on its own. Its raw values drift
 as its detector warms, about 4 °C of reading per °C of detector (a cold

@@ -51,7 +51,11 @@ static constexpr int RANGE_SETTLE_TRIES = 30;
 // The first frame comes about 1.5 s after the last start command; then one
 // every 40 ms, with short gaps while the shutter is closed.
 static constexpr uint32_t FIRST_FRAME_TIMEOUT_MS = 5000;
-static constexpr uint32_t FRAME_TIMEOUT_MS = 3000;
+// A shutter cycle pauses the camera's frames for several seconds (a shutter
+// cycle sent right after each start was followed by a pause of over 3 s every
+// time); only a longer silence is taken as the stream having stopped.
+static constexpr uint32_t FRAME_TIMEOUT_MS = 10000;
+static constexpr uint32_t PAUSE_LOG_MS = 1000;  // pauses at least this long are logged
 static constexpr size_t MAX_QUEUED_JOBS = 64;
 
 // ---------------------------------------------------------------- entities
@@ -1080,6 +1084,9 @@ void ThermalMasterP1::loop() {
         this->fail_("The camera stopped sending frames");
         break;
       }
+      const uint32_t pause = this->last_pause_ms_.exchange(0);
+      if (pause != 0)
+        ESP_LOGI(TAG, "The camera's frames paused for %.1f s, then went on", pause / 1000.0f);
       if (had) {
         this->failures_ = 0;
         this->publish_streaming_(since < 1000);
@@ -1117,6 +1124,8 @@ void ThermalMasterP1::on_transfer_(usb_transfer_t *t) {
         }
         this->frames_++;
         this->skipped_total_.store(this->assembler_.camera_skipped());
+        if (this->had_frame_ && ms - this->last_frame_ms_.load() >= PAUSE_LOG_MS)
+          this->last_pause_ms_.store(ms - this->last_frame_ms_.load());
         this->last_frame_ms_.store(ms);
         this->had_frame_ = true;
         xTaskNotifyGive(this->task_);

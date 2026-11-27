@@ -342,6 +342,7 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   std::atomic<bool> streaming_{false};
   std::atomic<int> inflight_{0};
   std::atomic<uint32_t> last_frame_ms_{0};
+  std::atomic<uint32_t> last_pause_ms_{0};  // a pause in the frames that ended, for the log
   uint32_t stream_started_ms_{0};
   std::atomic<bool> had_frame_{false};       // USB task: a frame came since the start
   std::atomic<bool> unreadable_now_{false};  // processing: the last frame had no temperatures
