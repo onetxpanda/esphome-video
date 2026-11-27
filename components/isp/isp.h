@@ -54,6 +54,11 @@ class Isp : public Component,
 
   // Configuration (before setup)
   void set_scale(uint8_t s) { this->opt_.scale = s; }
+  // Fit each frame within fit_w x fit_h instead (see fit_scale); 0 x 0: off.
+  void set_fit(uint16_t w, uint16_t h) {
+    this->fit_w_ = w;
+    this->fit_h_ = h;
+  }
   void set_format(video::ImageFormat f) { this->opt_.format = f; }
   void set_palette(Palette p) { this->palette_ = static_cast<uint8_t>(p); }
   // PaletteTarget (main loop): applied by the ISP task from the next frame.
@@ -68,6 +73,7 @@ class Isp : public Component,
   void set_range_max(float v);
   void set_mirror_x(bool v);
   void set_mirror_y(bool v);
+  void set_rotate(Rotation r);
   void set_upscale(Upscale u);
   void set_scaler(Scaler s);
   // Equalization in percent (0 = linear, 100 = fully equalized).
@@ -101,6 +107,8 @@ class Isp : public Component,
 
   std::mutex mutex_;  // guards opt_, scaler_, spots_, pending_, last_ and refresh_
   Options opt_;
+  uint16_t fit_w_{0}, fit_h_{0};
+  video::LargeBuffer<float> oriented_;  // ISP task: a rotated frame
   Scaler scaler_{Scaler::CPU};
   std::array<Spot, MAX_SPOTS> spots_{};
   uint8_t spot_count_{0};

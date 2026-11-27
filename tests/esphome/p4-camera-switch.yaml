@@ -1,0 +1,142 @@
+# Compile test: one processing chain for whichever camera is connected.
+#   mlx90640 ----------\
+#   thermal_master_p1 --+-> camera_switch -> radiometric -> isp -> overlay -\
+#                                               video_test_pattern -----------+-> video_switch -> h264_encoder
+#                                                                                              \-> video_camera
+# The ISP fits each camera to 640x480 and can rotate; spots apply to the
+# camera in use.
+esphome:
+  name: p4-camera-switch
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: hex
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [video_core, video_controls, mlx90640, thermal_master_p1, camera_switch, radiometric, isp, overlay, video_camera, video_test_pattern, video_switch, h264_encoder, rtsp_server]
+
+logger:
+api:
+  actions:
+    - action: thermal_spot
+      variables: {x: float, y: float, material: string}
+      then:
+        - lambda: 'id(thermal_isp)->toggle_spot(x, y, material);'
+ota:
+  - platform: esphome
+
+ethernet:
+  type: IP101
+  mdc_pin: GPIO31
+  mdio_pin: GPIO52
+  clk:
+    mode: CLK_EXT_IN
+    pin: GPIO50
+  phy_addr: 1
+  power_pin: GPIO51
+
+i2c:
+  - id: bus_i2c
+    sda: GPIO7
+    scl: GPIO8
+    frequency: 1MHz
+
+mlx90640:
+  id: mlx
+  i2c_id: bus_i2c
+  refresh_rate: 32Hz
+  frame_mode: merge
+
+usb_host:
+  enable_hubs: true
+
+thermal_master_p1:
+  id: p1
+  controls:
+    shutter:
+      name: "P1 Shutter"
+    range:
+      name: "P1 Range"
+    emissivity:
+      name: "P1 Emissivity"
+  status:
+    name: "P1 Status"
+
+camera_switch:
+  id: cameras
+  cameras:
+    - name: "Thermal Master P1"
+      source: p1
+    - name: "MLX90640"
+      source: mlx
+  camera:
+    name: "Camera"
+
+radiometric:
+  id: thermal_rad
+  source: cameras
+  valid_max: 650
+  min:
+    name: "Min Temperature"
+  controls:
+    median_filter:
+      name: "Median Filter"
+
+isp:
+  id: thermal_isp
+  source: thermal_rad
+  fit: 640x480
+  rotate: 90
+  upscale: bicubic
+  spots:
+    name: "Spots"
+  controls:
+    rotate:
+      name: "Rotation"
+    mirror_x:
+      name: "Mirror"
+    range_min:
+      name: "Range Min"
+
+overlay:
+  id: thermal_overlay
+  source: thermal_isp
+  marks: [spots]
+
+video_test_pattern:
+  id: test_pattern
+  width: 320
+  height: 240
+  fps: 10
+
+video_switch:
+  id: stream_switch
+  sources:
+    - name: "Thermal camera"
+      source: thermal_overlay
+    - name: "Test pattern"
+      source: test_pattern
+  select:
+    name: "Stream Source"
+
+video_camera:
+  name: "Thermal Camera"
+  source: stream_switch
+
+h264_encoder:
+  id: stream_h264
+  source: stream_switch
+  min_fps: 25
+  always_on: true
+
+rtsp_server:
+  encoder: stream_h264
+  max_clients: 4

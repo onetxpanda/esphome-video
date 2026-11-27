@@ -87,16 +87,21 @@ void Isp::setup() {
 void Isp::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "ISP:\n"
-                "  Scale: %ux, format: %s, palette: %s\n"
+                "  Scale: %ux%s, format: %s, palette: %s\n"
                 "  Range: %.1f .. %.1f\n"
                 "  Mirror: x %s, y %s; upscale: %s; scaler: %s\n"
                 "  Equalization: %.0f%%, detail: %.2f",
-                this->opt_.scale, format_name(this->opt_.format), video::PALETTE_NAMES[this->palette_.load()],
+                this->opt_.scale, this->fit_w_ ? " (fitted to the size below)" : "", format_name(this->opt_.format),
+                video::PALETTE_NAMES[this->palette_.load()],
                 this->opt_.range_min, this->opt_.range_max, YESNO(this->opt_.mirror_x), YESNO(this->opt_.mirror_y),
                 this->opt_.upscale == Upscale::BICUBIC    ? "bicubic"
                 : this->opt_.upscale == Upscale::BILINEAR ? "bilinear"
                                                           : "nearest",
                 this->scaler_ == Scaler::PPA ? "PPA" : "CPU", this->opt_.equalize * 100.0f, this->opt_.detail);
+  if (this->fit_w_ != 0)
+    ESP_LOGCONFIG(TAG, "  Fit: within %ux%u", this->fit_w_, this->fit_h_);
+  static const uint16_t DEGREES[] = {0, 90, 180, 270};
+  ESP_LOGCONFIG(TAG, "  Rotation: %u degrees clockwise", DEGREES[static_cast<uint8_t>(this->opt_.rotate) & 3]);
   ESP_LOGCONFIG(TAG, "  Spots: %u of %u", this->spot_count_, MAX_SPOTS);
   for (uint8_t i = 0; i < this->spot_count_; i++)
     ESP_LOGCONFIG(TAG, "    %u: %.1f%%, %.1f%%, %s, colour %u", i + 1, this->spots_[i].x * 100.0f,
@@ -131,6 +136,12 @@ void Isp::set_mirror_x(bool v) {
 void Isp::set_mirror_y(bool v) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   this->opt_.mirror_y = v;
+  this->refresh_ = true;
+  this->wake_();
+}
+void Isp::set_rotate(Rotation r) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  this->opt_.rotate = r;
   this->refresh_ = true;
   this->wake_();
 }
@@ -280,7 +291,8 @@ void Isp::task_loop_() {
       spots = this->spots_;
       spot_count = this->spot_count_;
       if (f.width > 0 && f.height > 0)
-        this->aspect_ = static_cast<float>(f.width) / f.height;
+        this->aspect_ = rotation_swaps(this->opt_.rotate) ? static_cast<float>(f.height) / f.width
+                                                          : static_cast<float>(f.width) / f.height;
     }
     const uint8_t palette = this->palette_.load();
     if (palette != this->palette_applied_) {
@@ -300,8 +312,32 @@ void Isp::task_loop_() {
   }
 }
 
-void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler scaler, const Spot *spots,
+void Isp::process_(const video::RadiometricFrame &frame, const Options &opt, Scaler scaler, const Spot *spots,
                    uint8_t spot_count, bool refresh) {
+  // A rotated frame is turned (with its mirroring) into a frame of its own
+  // first; everything below then works on the picture as shown, so spots and
+  // marks land where they are seen. Unrotated frames are mirrored on the way.
+  Options o = opt;
+  const float *temps = frame.temps();
+  uint16_t in_w = frame.width, in_h = frame.height;
+  const bool turned = o.rotate != Rotation::R0;
+  if (turned) {
+    const size_t n = static_cast<size_t>(in_w) * in_h;
+    if (!this->oriented_.ensure(n)) {
+      if (!this->memory_error_logged_) {
+        ESP_LOGE(TAG, "Out of memory to rotate a %ux%u frame; frames are dropped", in_w, in_h);
+        this->memory_error_logged_ = true;
+      }
+      return;
+    }
+    orient(temps, in_w, in_h, o.mirror_x, o.mirror_y, o.rotate, this->oriented_.data());
+    temps = this->oriented_.data();
+    if (rotation_swaps(o.rotate))
+      std::swap(in_w, in_h);
+    o.mirror_x = o.mirror_y = false;
+  }
+  if (this->fit_w_ != 0)
+    o.scale = fit_scale(in_w, in_h, this->fit_w_, this->fit_h_);
   const int s = o.scale < 1 ? 1 : o.scale;
   // Unscaled linear output is tone-mapped straight into the output frame,
   // below; everything else goes through the index image.
@@ -309,9 +345,9 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   uint32_t tone_us = 0;
   if (!direct) {
     const uint32_t t0 = micros();
-    if (!this->cpu_.tone_map(in.temps(), in.width, in.height, o)) {
+    if (!this->cpu_.tone_map(temps, in_w, in_h, o)) {
       if (!this->memory_error_logged_) {
-        ESP_LOGE(TAG, "Out of memory for a %ux%u index buffer; frames are dropped", in.width, in.height);
+        ESP_LOGE(TAG, "Out of memory for a %ux%u index buffer; frames are dropped", in_w, in_h);
         this->memory_error_logged_ = true;
       }
       return;
@@ -320,13 +356,13 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   }
 
   video::ImageFrame out;
-  out.width = in.width * s;
-  out.height = in.height * s;
+  out.width = in_w * s;
+  out.height = in_h * s;
   out.format = o.format;
   out.stride = out.width * video::bytes_per_pixel(o.format);
   // Drawn again after a change: now, so encoders see time move on.
-  out.timestamp_ms = refresh ? millis() : in.timestamp_ms;
-  out.sequence = in.sequence;
+  out.timestamp_ms = refresh ? millis() : frame.timestamp_ms;
+  out.sequence = frame.sequence;
   const size_t bytes = out.length();
   if (this->pool_ == nullptr || this->pool_size_ < bytes) {
     this->pool_.reset();
@@ -349,7 +385,7 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   const uint32_t t1 = micros();
   uint32_t scale_us = 0;
   if (direct) {
-    this->cpu_.map_direct(in.temps(), in.width, in.height, o, out.buffer.data(), out.stride);
+    this->cpu_.map_direct(temps, in_w, in_h, o, out.buffer.data(), out.stride);
     tone_us = micros() - t1;
   } else {
     bool done = false;
@@ -361,9 +397,12 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   }
   const uint32_t t2 = micros();
 
-  for (uint8_t i = 0; i < in.annotations.count; i++) {
-    video::Annotation a = in.annotations.items[i];
-    const Point p = map_point(o, in.width, in.height, a.x, a.y);
+  // Marks (min, max, centre) are in the source's pixels: turned like the frame.
+  for (uint8_t i = 0; i < frame.annotations.count; i++) {
+    video::Annotation a = frame.annotations.items[i];
+    if (turned)
+      orient_point(a.x, a.y, frame.width, frame.height, opt.mirror_x, opt.mirror_y, opt.rotate, &a.x, &a.y);
+    const Point p = map_point(o, in_w, in_h, a.x, a.y);
     a.x = static_cast<float>(p.x);
     a.y = static_cast<float>(p.y);
     out.annotations.add(a);
@@ -372,8 +411,8 @@ void Isp::process_(const video::RadiometricFrame &in, const Options &o, Scaler s
   // and corrected for their material.
   for (uint8_t i = 0; i < spot_count; i++) {
     const Point p = spot_point(out.width, out.height, spots[i].x, spots[i].y);
-    const float v = correct_emissivity(spot_value(in.temps(), in.width, in.height, o, spots[i].x, spots[i].y),
-                                       in.emissivity, MATERIALS[spots[i].material].emissivity, in.reflected);
+    const float v = correct_emissivity(spot_value(temps, in_w, in_h, o, spots[i].x, spots[i].y), frame.emissivity,
+                                       MATERIALS[spots[i].material].emissivity, frame.reflected);
     out.annotations.add(
         {static_cast<float>(p.x), static_cast<float>(p.y), v, video::AnnotationKind::SPOT, spots[i].color});
   }

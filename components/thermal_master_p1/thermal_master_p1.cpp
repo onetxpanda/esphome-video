@@ -282,9 +282,13 @@ void ThermalMasterP1::queue_after_start_() {
     const Setting s = static_cast<Setting>(i);
     if (s == Setting::RANGE)
       continue;  // set by the start-up sequence, read once it has settled
+    // What the frames' temperatures were computed with (their emissivity and
+    // reflected temperature, for spots of another material) is read at every
+    // start, entity or not.
+    const bool for_frames = s == Setting::ENV_CORRECTION || s == Setting::EMISSIVITY || s == Setting::REFLECTED;
     if (this->initial_set_[i]) {
       this->write_setting(s, this->initial_[i]);
-    } else if (this->entities_[i][0] != nullptr) {
+    } else if (this->entities_[i][0] != nullptr || for_frames) {
       if (setting_info(s).get != 0)
         this->queue_setting_read_(s);
       else
@@ -1215,7 +1219,15 @@ void ThermalMasterP1::process_(const video::FrameRef &raw, uint32_t ts) {
   f.sequence = ++this->sequence_;
   // The camera's temperatures are for a surface it sees as a black body
   // unless its own environment correction is on (the vendor app corrects for
-  // emissivity and the like itself, and never turns the camera's on).
+  // emissivity and the like itself, and never turns the camera's on). Said
+  // with the frame, so a spot can re-correct for its material.
+  {
+    const int32_t env = this->known_[static_cast<size_t>(Setting::ENV_CORRECTION)];
+    const int32_t em = this->known_[static_cast<size_t>(Setting::EMISSIVITY)];
+    const int32_t tu = this->known_[static_cast<size_t>(Setting::REFLECTED)];
+    f.emissivity = env == 1 && em != UNKNOWN && em > 0 ? em / 16384.0f : 1.0f;
+    f.reflected = tu != UNKNOWN ? static_cast<float>(tu) - 273.0f : NAN;
+  }
   this->images_++;
   this->process_us_ += micros() - t0;
   this->sinks_.deliver(f, [](video::RadiometricSink *s, const video::RadiometricFrame &fr) {

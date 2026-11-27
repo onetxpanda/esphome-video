@@ -21,6 +21,7 @@ encoders; there is no software encoding.
 | `video_camera` | ESPHome camera entity (Home Assistant, web server), JPEG from the P4's hardware encoder. |
 | `video_test_pattern` | Synthetic image source for checking encoders and streams. |
 | `video_palette` | One select entity choosing the palette of several ISPs and cameras at once. |
+| `camera_switch` | Passes on the radiometric frames of whichever camera is connected, so one processing chain and one set of its controls serve every camera. |
 | `video_switch` | Chooses which of several image sources reaches the consumers after it (encoder, camera), with a select entity. |
 | `assert_capture` | Records why the firmware aborted (failed assert with file and line, `abort()` caller, task stack overflow) and reports it after the reboot. |
 | `task_stats` | Logs each FreeRTOS task's share of the CPU and each core's idle time; optional CPU load sensor. |
@@ -215,6 +216,42 @@ camera keeps are entities only when listed under `maintenance:`. See
 camera: the commands are the vendor app's library's, and most of them the
 app itself never sends to a P1.
 
+### One chain for whichever camera is connected
+
+When the cameras are swapped (one plugged in at a time), a `camera_switch`
+in front of the processing lets one chain, and one set of its controls,
+serve them all: it passes on the frames of the first camera in its list that
+has sent a frame within `timeout` (10 s by default; longer than the slowest
+camera's frame interval). Its `camera` text sensor shows which one is in
+use. Give the `isp` a `fit` size instead of a `scale`, so each camera is
+enlarged by the largest whole factor that fits (640x480: an MLX90640 20x, a
+Thermal Master P1 4x).
+
+```yaml
+camera_switch:
+  id: cameras
+  cameras:
+    - name: "Thermal Master P1"
+      source: p1
+    - name: "MLX90640"
+      source: mlx
+  camera:
+    name: "Camera"
+
+radiometric:
+  - id: thermal_rad
+    source: cameras
+    valid_max: 650         # the P1's low range reaches 600 C
+
+isp:
+  - id: thermal_isp
+    source: thermal_rad
+    fit: 640x480
+    controls:
+      rotate:
+        name: "Thermal Rotation"
+```
+
 ### Spot meters
 
 An `isp` can show up to 8 spots: reticles with the temperature under them,
@@ -226,6 +263,13 @@ that material's emissivity. A Home Assistant dashboard card places them:
 click the image to add a spot, click a spot to remove it, and pick each
 spot's material in the list below the image, which shows each spot's
 colour.
+
+A spot is a point of the picture as shown. Mirrored or rotated, it reads the
+camera pixel shown under it; behind a `camera_switch` it reads whichever
+camera is in use, corrected from the emissivity that camera's temperatures
+were computed with (an MLX90640's setting; a Thermal Master P1's own, or 1
+while its environment correction is off). Cameras with different fields of
+view show different parts of the scene at the same point of the picture.
 
 On the device, give the `isp` a `spots` text sensor and add these API actions
 (the card calls them by these names):
@@ -464,15 +508,19 @@ isp:
   Sensors: `min`, `max`, `mean`, `median`, `center`. Controls:
   `temporal_frames`, `motion_threshold`, `edge_smoothing`, `median_filter`,
   `outlier_level`.
-- **isp**: `scale` (1–20), `format` (RGB565_LE, RGB565_BE, RGB888, GRAY8),
+- **isp**: `scale` (1–20), `fit` (instead of `scale`: e.g. 640x480, the
+  largest whole scale that fits, for each frame), `rotate` (0, 90, 180, 270;
+  clockwise, after mirroring), `format` (RGB565_LE, RGB565_BE, RGB888, GRAY8),
   `palette` (white_hot, black_hot, ironbow, lava, rainbow, iron_gray,
   red_hot, rainbow_2; the order of the HTI-301's own palettes), `range_min`, `range_max`, `mirror_x`, `mirror_y`,
   `upscale` (nearest, bilinear, bicubic), `scaler` (cpu, ppa), `equalize`
   (percent; 0 = linear), `detail` (gain; 0 = off), `spots` (text sensor
   listing the spots as `x,y,material,colour;...`; see Spot meters). Controls:
   `range_min`, `range_max` (temperatures in °C, so Home Assistant shows them
-  in its own unit), `mirror_x`, `mirror_y`, `upscale`, `scaler`, `equalize`,
-  `detail`, `clear_spots` (button).
+  in its own unit), `mirror_x`, `mirror_y`, `rotate`, `upscale`, `scaler`,
+  `equalize`, `detail`, `clear_spots` (button).
+- **camera_switch**: `cameras` (each a `name` and a radiometric `source`, in
+  order of preference), `timeout` (default 10 s), `camera` (text sensor).
 - **overlay**: `marks` (min, max, center, spots), `hold` (how often a mark's
   position and value are refreshed; default 1 s; a spot that is moved moves
   at once), `unit` (C, F), `enabled`. Controls: `enabled`, `unit`.

@@ -87,6 +87,8 @@ PIPELINE_TESTS = [
      ["video_core", "thermal_master_p1"]),
     ("test_repeat_policy", ["unit/test_repeat_policy.cpp"], ["h264_encoder"]),
     ("test_slot_exchange", ["unit/test_slot_exchange.cpp"], ["h264_encoder"]),
+    ("test_orient", ["unit/test_orient.cpp", "video_core/frame.cpp", "isp/isp_core.cpp"], ["video_core", "isp"]),
+    ("test_camera_choice", ["unit/test_camera_choice.cpp"], ["camera_switch"]),
 ]
 
 

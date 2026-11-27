@@ -20,6 +20,53 @@ Point map_point(const Options &o, uint16_t in_w, uint16_t in_h, float x, float y
 
 static inline float clamp01(float f) { return f > 0.0f ? (f < 1.0f ? f : 1.0f) : 0.0f; }  // NaN: 0
 
+// Mirrored coordinates (a, b) of a w x h frame, in the rotated frame.
+static inline void rotate_coords(float a, float b, uint16_t w, uint16_t h, Rotation r, float *ox, float *oy) {
+  switch (r) {
+    case Rotation::R90:  // clockwise: the left column becomes the top row
+      *ox = (h - 1) - b;
+      *oy = a;
+      break;
+    case Rotation::R180:
+      *ox = (w - 1) - a;
+      *oy = (h - 1) - b;
+      break;
+    case Rotation::R270:
+      *ox = b;
+      *oy = (w - 1) - a;
+      break;
+    default:
+      *ox = a;
+      *oy = b;
+      break;
+  }
+}
+
+void orient_point(float x, float y, uint16_t w, uint16_t h, bool mirror_x, bool mirror_y, Rotation r, float *ox,
+                  float *oy) {
+  rotate_coords(mirror_x ? (w - 1) - x : x, mirror_y ? (h - 1) - y : y, w, h, r, ox, oy);
+}
+
+void orient(const float *in, uint16_t w, uint16_t h, bool mirror_x, bool mirror_y, Rotation r, float *out) {
+  const int ow = rotation_swaps(r) ? h : w;
+  for (int y = 0; y < h; y++) {
+    const int my = mirror_y ? h - 1 - y : y;
+    for (int x = 0; x < w; x++) {
+      const int mx = mirror_x ? w - 1 - x : x;
+      float fx, fy;
+      rotate_coords(static_cast<float>(mx), static_cast<float>(my), w, h, r, &fx, &fy);
+      out[static_cast<size_t>(fy) * ow + static_cast<size_t>(fx)] = in[static_cast<size_t>(y) * w + x];
+    }
+  }
+}
+
+uint8_t fit_scale(uint16_t w, uint16_t h, uint16_t fit_w, uint16_t fit_h) {
+  if (w == 0 || h == 0)
+    return 1;
+  const int s = std::min(fit_w / w, fit_h / h);
+  return static_cast<uint8_t>(std::min(std::max(s, 1), 20));
+}
+
 Point spot_point(uint16_t out_w, uint16_t out_h, float fx, float fy) {
   // Rounded, so a fraction that is a whole pixel in exact arithmetic is that pixel.
   auto at = [](float f, int n) { return std::max(0, std::min(static_cast<int>(clamp01(f) * n + 0.5f), n - 1)); };

@@ -32,6 +32,8 @@ namespace esphome {
 namespace isp {
 
 enum class Upscale : uint8_t { NEAREST = 0, BILINEAR = 1, BICUBIC = 2 };
+// Clockwise, applied after mirroring.
+enum class Rotation : uint8_t { R0 = 0, R90 = 1, R180 = 2, R270 = 3 };
 
 struct Rgb {
   uint8_t r, g, b;
@@ -42,6 +44,10 @@ struct Options {
   float range_max{40.0f};  // input value mapped to palette index 255
   bool mirror_x{false};
   bool mirror_y{false};
+  // Rotation is not done by the stages below (tone mapping, scaling, spots,
+  // map_point): a frame to be rotated is first turned with orient(), and
+  // those stages then see it unrotated and unmirrored.
+  Rotation rotate{Rotation::R0};
   uint8_t scale{1};  // output = input * scale, 1..20
   Upscale upscale{Upscale::NEAREST};
   video::ImageFormat format{video::ImageFormat::RGB565_LE};
@@ -65,6 +71,20 @@ inline bool linear_tone(const Options &o) { return !(o.equalize > 0.0f) && !(o.d
 struct Point {
   int x, y;
 };
+
+// Orientation: mirroring (x then y, as Options) and then a clockwise rotation.
+// The size of a w x h frame after `r`.
+inline bool rotation_swaps(Rotation r) { return r == Rotation::R90 || r == Rotation::R270; }
+// Writes `in` (w x h) mirrored and rotated into `out`, which holds w * h
+// values and is h x w when the rotation swaps the sides, else w x h.
+void orient(const float *in, uint16_t w, uint16_t h, bool mirror_x, bool mirror_y, Rotation r, float *out);
+// Where input pixel coordinates (x, y) (a w x h frame; pixel centres at whole
+// numbers) land in the oriented frame.
+void orient_point(float x, float y, uint16_t w, uint16_t h, bool mirror_x, bool mirror_y, Rotation r, float *ox,
+                  float *oy);
+// The largest whole scale (1..20) at which a w x h frame fits within
+// fit_w x fit_h; 1 when it is already larger.
+uint8_t fit_scale(uint16_t w, uint16_t h, uint16_t fit_w, uint16_t fit_h);
 Point map_point(const Options &o, uint16_t in_w, uint16_t in_h, float x, float y);
 
 // Spot meters: points placed on the output image as it is shown (after

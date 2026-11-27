@@ -41,6 +41,8 @@ DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["video_core", "video_controls", "text_sensor"]
 
 CONF_SCALE = "scale"
+CONF_FIT = "fit"
+CONF_ROTATE = "rotate"
 CONF_PALETTE = "palette"
 CONF_RANGE_MIN = "range_min"
 CONF_RANGE_MAX = "range_max"
@@ -61,6 +63,8 @@ PALETTE_ALIASES = {"iron": "ironbow", "gray": "white_hot", "grey": "white_hot"}
 UPSCALES = ["nearest", "bilinear", "bicubic"]
 UPSCALE_LABELS = ["Nearest", "Bilinear", "Bicubic"]
 SCALERS = ["cpu", "ppa"]
+ROTATIONS = [0, 90, 180, 270]
+ROTATION_LABELS = ["0°", "90°", "180°", "270°"]
 SCALER_LABELS = ["CPU", "PPA"]
 
 isp_ns = cg.esphome_ns.namespace("isp")
@@ -95,6 +99,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_SOURCE): cv.use_id(RadiometricSource),
             # Output size is the source size times this.
             cv.Optional(CONF_SCALE, default=1): cv.int_range(min=1, max=20),
+            # Instead of `scale`: the largest whole scale at which the source
+            # (after rotation) fits within this size, worked out for each
+            # frame, so one ISP serves sources of different sizes (e.g.
+            # 640x480: a 32x24 source 20x, a 160x120 source 4x).
+            cv.Optional(CONF_FIT): cv.dimensions,
+            # Clockwise, after mirroring.
+            cv.Optional(CONF_ROTATE, default=0): cv.one_of(*ROTATIONS, int=True),
             # RGB565_LE is what the ESP32-P4's H.264 encoder and PPA take.
             cv.Optional(CONF_FORMAT, default="RGB565_LE"): cv.enum(FORMATS, upper=True),
             cv.Optional(CONF_PALETTE, default="ironbow"): _palette,
@@ -124,6 +135,7 @@ CONFIG_SCHEMA = cv.All(
                     ),
                     cv.Optional(CONF_MIRROR_X): switch_control(),
                     cv.Optional(CONF_MIRROR_Y): switch_control(),
+                    cv.Optional(CONF_ROTATE): select_control(),
                     cv.Optional(CONF_UPSCALE): select_control(),
                     cv.Optional(CONF_SCALER): select_control(),
                     cv.Optional(CONF_EQUALIZE): number_control(),
@@ -154,6 +166,9 @@ async def to_code(config):
         include_builtin_idf_component("esp_driver_ppa")
 
     cg.add(var.set_scale(config[CONF_SCALE]))
+    if CONF_FIT in config:
+        cg.add(var.set_fit(config[CONF_FIT][0], config[CONF_FIT][1]))
+    cg.add(var.set_rotate(cg.RawExpression(f"esphome::isp::Rotation::R{config[CONF_ROTATE]}")))
     cg.add(var.set_format(ImageFormat.enum(config[CONF_FORMAT])))
     cg.add(var.set_palette(Palette.enum(config[CONF_PALETTE].upper())))
     cg.add(var.set_range_min(config[CONF_RANGE_MIN]))
@@ -173,6 +188,11 @@ async def to_code(config):
     for key in (CONF_MIRROR_X, CONF_MIRROR_Y):
         if key in c:
             await new_switch_control(c[key], var, f"set_{key}", config[key])
+    if CONF_ROTATE in c:
+        await new_select_control(
+            c[CONF_ROTATE], var, "set_rotate", ROTATION_LABELS, ROTATIONS.index(config[CONF_ROTATE]),
+            convert="static_cast<esphome::isp::Rotation>(v)",
+        )
     if CONF_UPSCALE in c:
         await new_select_control(
             c[CONF_UPSCALE], var, "set_upscale", UPSCALE_LABELS, UPSCALES.index(config[CONF_UPSCALE]),
