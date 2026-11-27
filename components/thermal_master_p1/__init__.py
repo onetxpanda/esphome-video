@@ -61,6 +61,8 @@ CONF_STATUS = "status"
 CONF_LOG_TIMING = "log_timing"
 CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
 CONF_SHUTTER_AFTER_START = "shutter_after_start"
+CONF_RESTART_USB = "restart_usb"
+CONF_RESTART_USB_AFTER = "restart_usb_after"
 CONF_CAMERA_POINT = "camera_point"
 CONF_CAMERA_MAX = "camera_max_temperature"
 CONF_CAMERA_MIN = "camera_min_temperature"
@@ -350,6 +352,9 @@ CONTROLS_SCHEMA = cv.Schema(
         cv.Optional(CONF_OFFSET): number_control(unit_of_measurement="°C"),
         **{cv.Optional(k): button_control() for k in ACTIONS},
         **{cv.Optional(k): s for k, s in _controls(SETTINGS).items()},
+        # Powers the USB port off and on: the camera starts afresh, as if
+        # unplugged and plugged in again.
+        cv.Optional(CONF_RESTART_USB): button_control(),
     }
 )
 MAINTENANCE_SCHEMA = cv.Schema(
@@ -399,6 +404,10 @@ CONFIG_SCHEMA = cv.All(
             # including the restarts after the stream stops): the
             # temperatures otherwise read low until its own next one.
             cv.Optional(CONF_SHUTTER_AFTER_START, default=False): cv.boolean,
+            # If no camera has appeared this long after boot, power the USB
+            # port off and on once. A camera left mid-stream by a reboot of
+            # this board keeps its power and does not announce itself again.
+            cv.Optional(CONF_RESTART_USB_AFTER): cv.positive_time_period_milliseconds,
             # The point camera_point_temperature reads (the camera's own measurement); the centre by default.
             cv.Optional(CONF_CAMERA_POINT): cv.Schema(
                 {cv.Required(CONF_X): cv.int_range(min=0, max=159), cv.Required(CONF_Y): cv.int_range(min=0, max=119)}
@@ -471,8 +480,10 @@ async def _new_button(conf, call):
 
 
 async def to_code(config):
-    # Not usb_camera_protections(): with them (v1.3.2, v1.3.3) the P4 never
-    # saw the P1 on USB, where v1.2.6 found it after every reboot. Under test.
+    # Not usb_camera_protections(): removed in v1.3.4 while finding out why
+    # the P1 was not seen after a reboot. The cause turned out to be the
+    # camera keeping its power through a reboot of this board (it was not
+    # seen with v1.3.5, without them, either; see restart_usb_after).
     var = await usb_host.register_usb_client(config)
     cg.add(var.set_gain(config[CONF_GAIN]))
     cg.add(var.set_offset(config[CONF_OFFSET]))
@@ -480,6 +491,8 @@ async def to_code(config):
     cg.add(var.set_log_timing(config[CONF_LOG_TIMING]))
     cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
     cg.add(var.set_shutter_after_start(config[CONF_SHUTTER_AFTER_START]))
+    if CONF_RESTART_USB_AFTER in config:
+        cg.add(var.set_restart_usb_after(config[CONF_RESTART_USB_AFTER]))
     if CONF_HEARTBEAT_INTERVAL in config:
         cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
     for key, value in config[CONF_SETTINGS].items():
@@ -529,6 +542,8 @@ async def to_code(config):
     for key, enum_name in ACTIONS.items():
         if key in c:
             await _new_button(c[key], f"{var}->press(esphome::thermal_master_p1::Action::{enum_name})")
+    if CONF_RESTART_USB in c:
+        await _new_button(c[CONF_RESTART_USB], f"{var}->restart_usb()")
     for key, (enum_name, (kind, extra)) in SETTINGS.items():
         await _new_setting_entities(c, var, key, enum_name, kind, extra)
 

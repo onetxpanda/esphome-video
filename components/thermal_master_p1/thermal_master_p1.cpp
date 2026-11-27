@@ -56,6 +56,12 @@ static constexpr uint32_t FIRST_FRAME_TIMEOUT_MS = 5000;
 // time); only a longer silence is taken as the stream having stopped.
 static constexpr uint32_t FRAME_TIMEOUT_MS = 10000;
 static constexpr uint32_t PAUSE_LOG_MS = 1000;  // pauses at least this long are logged
+// restart_usb(): how long the port stays off at least, how often the power-on
+// is retried, how long the bus must be empty first, and when to give up.
+static constexpr uint32_t USB_OFF_MS = 1000;
+static constexpr uint32_t USB_RETRY_MS = 100;
+static constexpr uint32_t USB_SETTLE_MS = 100;
+static constexpr uint32_t USB_RESTART_TIMEOUT_MS = 10000;
 static constexpr size_t MAX_QUEUED_JOBS = 64;
 
 // ---------------------------------------------------------------- entities
@@ -1022,6 +1028,17 @@ void ThermalMasterP1::loop() {
   // below (commands, timeouts, the stream) runs from this loop.
   this->process_usb_events_();
   const uint32_t now = millis();
+  if (this->device_handle_ != nullptr)
+    this->camera_seen_ = true;
+  if (this->usb_restarting_) {
+    this->power_on_after_restart_(now);
+  } else if (this->restart_usb_after_ms_ != 0 && !this->boot_restart_done_ && !this->camera_seen_ &&
+             now >= this->restart_usb_after_ms_) {
+    this->boot_restart_done_ = true;
+    ESP_LOGW(TAG, "No camera %u s after boot; restarting the USB port",
+             static_cast<unsigned>(this->restart_usb_after_ms_ / 1000));
+    this->restart_usb();
+  }
   switch (this->stage_) {
     case Stage::IDLE:
       break;
@@ -1159,6 +1176,62 @@ void ThermalMasterP1::on_transfer_(usb_transfer_t *t) {
 }
 
 // ---------------------------------------------------------------- processing task
+
+void ThermalMasterP1::restart_usb() {
+  if (this->usb_restarting_)
+    return;
+  const esp_err_t err = usb_host_lib_set_root_port_power(false);
+  ESP_LOGI(TAG, "USB port powered off for a restart: %s", esp_err_to_name(err));
+  if (err != ESP_OK)
+    return;
+  this->set_status_("Restarting the USB port");
+  const uint32_t now = millis();
+  this->usb_restarting_ = true;
+  this->usb_bus_empty_ = false;
+  this->usb_restart_ms_ = now;
+  this->usb_retry_ms_ = now + USB_OFF_MS;
+}
+
+// The host powers the port again only once it has freed every device that was
+// on it (until then usb_host_lib_set_root_port_power(true) fails with
+// ESP_ERR_INVALID_STATE): wait until nothing is enumerated, leave the host a
+// moment, then power it on, retrying while the host reports the port busy.
+void ThermalMasterP1::power_on_after_restart_(uint32_t now) {
+  if (static_cast<int32_t>(now - this->usb_retry_ms_) < 0)
+    return;
+  this->usb_retry_ms_ = now + USB_RETRY_MS;
+  const bool timed_out = now - this->usb_restart_ms_ >= USB_RESTART_TIMEOUT_MS;
+  uint8_t addrs[16];
+  int count = 0;
+  if (usb_host_device_addr_list_fill(sizeof(addrs), addrs, &count) != ESP_OK)
+    count = 0;
+  if (!timed_out) {
+    if (count > 0) {
+      this->usb_bus_empty_ = false;
+      return;
+    }
+    if (!this->usb_bus_empty_) {
+      this->usb_bus_empty_ = true;
+      this->usb_empty_since_ms_ = now;
+      return;
+    }
+    if (now - this->usb_empty_since_ms_ < USB_SETTLE_MS)
+      return;
+  }
+  const esp_err_t err = usb_host_lib_set_root_port_power(true);
+  if (err == ESP_ERR_INVALID_STATE && !timed_out)
+    return;  // the port is not recovered yet
+  this->usb_restarting_ = false;
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "USB port not powered on again after %u ms: %s", static_cast<unsigned>(now - this->usb_restart_ms_),
+             esp_err_to_name(err));
+    this->set_status_(std::string("The USB port did not power on again (") + esp_err_to_name(err) +
+                      "); restart the device");
+    return;
+  }
+  ESP_LOGI(TAG, "USB port powered on again after %u ms", static_cast<unsigned>(now - this->usb_restart_ms_));
+  this->set_status_("USB port powered on again; waiting for the camera");
+}
 
 void ThermalMasterP1::task_entry_(void *arg) { static_cast<ThermalMasterP1 *>(arg)->task_loop_(); }
 

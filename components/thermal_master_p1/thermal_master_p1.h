@@ -176,6 +176,13 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   void write_setting_part(Setting s, int part, int32_t v);
   void press(Action a);
   void trigger_shutter() { this->press(Action::SHUTTER); }
+  // Powers the USB port off and on: everything on it starts afresh, as if
+  // unplugged and plugged in again.
+  void restart_usb();
+  // With a time set, the USB port is restarted once after boot if no camera
+  // has appeared by then (a camera left mid-stream by a reboot of this board
+  // keeps its power and does not announce itself again).
+  void set_restart_usb_after(uint32_t ms) { this->restart_usb_after_ms_ = ms; }
   void set_param(Param p, float v) { this->params_[static_cast<size_t>(p)] = v; }
   void press_custom(Custom c);
   // The point camera_point_temperature reads (the camera's own measurement).
@@ -232,6 +239,13 @@ class ThermalMasterP1 : public usb_host::USBClient, public video::RadiometricSou
   using Done = std::function<void(bool, const std::vector<uint8_t> &)>;
 
   void on_connected() override;
+  void power_on_after_restart_(uint32_t now);
+  uint32_t restart_usb_after_ms_{0};
+  bool camera_seen_{false};
+  bool boot_restart_done_{false};
+  bool usb_restarting_{false};
+  bool usb_bus_empty_{false};
+  uint32_t usb_restart_ms_{0}, usb_retry_ms_{0}, usb_empty_since_ms_{0};
   void on_disconnected() override;
 
   static void add_command_(std::vector<Step> &v, const Command &c);

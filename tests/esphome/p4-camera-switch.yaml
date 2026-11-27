@@ -61,6 +61,7 @@ usb_host:
 thermal_master_p1:
   id: p1
   shutter_after_start: true
+  restart_usb_after: 15s
   controls:
     shutter:
       name: "P1 Shutter"
@@ -68,6 +69,8 @@ thermal_master_p1:
       name: "P1 Range"
     emissivity:
       name: "P1 Emissivity"
+    restart_usb:
+      name: "P1 Restart USB"
   status:
     name: "P1 Status"
 
