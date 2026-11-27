@@ -13,7 +13,12 @@ from esphome.components.video_controls import (
     new_number_control,
     number_control,
 )
-from esphome.components.video_core import DEVICE_ID_SCHEMA, RadiometricSource, inherit_device_id
+from esphome.components.video_core import (
+    DEVICE_ID_SCHEMA,
+    RadiometricSource,
+    inherit_device_id,
+    usb_camera_protections,
+)
 import esphome.config_validation as cv
 from esphome.const import CONF_OFFSET, DEVICE_CLASS_RUNNING, ENTITY_CATEGORY_DIAGNOSTIC
 
@@ -82,6 +87,7 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    usb_camera_protections()
     var = await usb_host.register_usb_client(config)
     cg.add(var.set_gain(config[CONF_GAIN]))
     cg.add(var.set_offset(config[CONF_OFFSET]))

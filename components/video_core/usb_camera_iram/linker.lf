@@ -1,4 +1,4 @@
-# The USB host interrupt starts each queued isochronous transfer when the one
+# The USB host interrupt starts each queued transfer (isochronous or bulk) when the one
 # before it ends, and has one 125 us microframe to do so. ESP-IDF keeps most
 # of that path in flash, behind the cache that PSRAM traffic also uses: while
 # frames are processed the code gets evicted, the interrupt runs late, and the
@@ -7,7 +7,7 @@
 # two task-side calls that hold the driver's lock the interrupt waits on.
 # A name a later ESP-IDF inlines away is skipped.
 
-[mapping:hti301_usb_iram]
+[mapping:usb_camera_iram]
 archive: libusb.a
 entries:
     hcd_dwc:intr_hdlr_main (noflash)
@@ -25,7 +25,7 @@ entries:
     usb_host:endpoint_callback (noflash)
     usb_host:_unblock_client (noflash)
 
-[mapping:hti301_usb_hal_iram]
+[mapping:usb_camera_hal_iram]
 archive: libhal.a
 entries:
     usb_dwc_hal:usb_dwc_hal_decode_intr (noflash)

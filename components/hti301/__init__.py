@@ -4,16 +4,9 @@ A radiometric source (temperatures, in radiometric mode) and an image source
 (the camera's own processed image, in processed mode). Needs `usb_host:` on an
 ESP32-P4 (USB 2.0 high speed)."""
 
-from pathlib import Path
-
 import esphome.codegen as cg
 from esphome.components import binary_sensor, text_sensor, usb_host
-from esphome.components.esp32 import (
-    VARIANT_ESP32P4,
-    add_idf_component,
-    add_idf_sdkconfig_option,
-    only_on_variant,
-)
+from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
 from esphome.components.video_controls import (
     button_control,
     new_button_control,
@@ -30,6 +23,7 @@ from esphome.components.video_core import (
     PaletteTarget,
     RadiometricSource,
     inherit_device_id,
+    usb_camera_protections,
 )
 import esphome.config_validation as cv
 from esphome.const import (
@@ -39,7 +33,6 @@ from esphome.const import (
     DEVICE_CLASS_RUNNING,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
-from esphome.core import HexInt
 
 CODEOWNERS = ["@onetxpanda"]
 DEPENDENCIES = ["usb_host", "esp32"]
@@ -64,7 +57,6 @@ CONF_AUTO_CALIBRATE = "auto_calibrate"
 VID = 0x1514
 PID = 0x0001
 
-USB_IRAM_COMPONENT = "hti301_usb_iram"  # an ESP-IDF component in this folder
 
 MODES = ["radiometric", "processed"]
 MODE_LABELS = ["Radiometric", "Processed"]
@@ -127,19 +119,9 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
-    # A 780-byte isochronous packet arrives every 125 us. Give the USB
-    # controller's receive FIFO the most room (3.3 KB rather than 2.5 KB) so
-    # packets wait there, not get dropped, while its DMA is held up.
-    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_IN", True)
-    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED", False)
-    # Cache write-backs before DMA (H.264, JPEG, PPA) run with interrupts off
-    # and hold a lock the USB driver takes; a whole frame's lasts longer than
-    # the 125 us the USB interrupt has to start the next transfer. In 8 KB
-    # pieces, each is short.
-    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS", True)
-    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN", HexInt(0x2000))
-    # The USB interrupt path in IRAM, so processing cannot make it late.
-    add_idf_component(name=USB_IRAM_COMPONENT, path=str(Path(__file__).parent / USB_IRAM_COMPONENT))
+    # A 780-byte isochronous packet arrives every 125 us (see
+    # usb_camera_protections).
+    usb_camera_protections()
     var = await usb_host.register_usb_client(config)
     mode = MODES.index(config[CONF_MODE])
     rng = RANGES.index(config[CONF_RANGE])

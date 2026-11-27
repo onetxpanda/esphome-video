@@ -18,6 +18,7 @@ from esphome.components.video_core import (
     ImageSource,
     RadiometricSource,
     inherit_device_id,
+    usb_camera_protections,
 )
 import esphome.config_validation as cv
 from esphome.const import (
@@ -466,6 +467,7 @@ async def _new_button(conf, call):
 
 
 async def to_code(config):
+    usb_camera_protections()
     var = await usb_host.register_usb_client(config)
     cg.add(var.set_gain(config[CONF_GAIN]))
     cg.add(var.set_offset(config[CONF_OFFSET]))

@@ -51,3 +51,29 @@ PaletteTarget = video_ns.class_("PaletteTarget")
 # PALETTE_NAMES in frame.h.
 PALETTE_KEYS = ["white_hot", "black_hot", "ironbow", "lava", "rainbow", "iron_gray", "red_hot", "rainbow_2"]
 PALETTE_LABELS = ["White hot", "Black hot", "Ironbow", "Lava", "Rainbow", "Iron gray", "Red hot", "Rainbow 2"]
+
+
+def usb_camera_protections():
+    """What every USB camera component needs on the ESP32-P4, called from its
+    to_code(). Without it, frame processing starves the USB host: a camera's
+    transfers run late or are lost, and with a 25 frames/s camera feeding the
+    H.264 encoder the USB task spun on a lock until the task watchdog reset
+    the chip."""
+    from pathlib import Path
+
+    from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
+    from esphome.core import HexInt
+
+    # Give the USB controller's receive FIFO the most room (3.3 KB rather than
+    # 2.5 KB), so incoming packets wait there, not get dropped, while its DMA
+    # is held up.
+    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_IN", True)
+    add_idf_sdkconfig_option("CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED", False)
+    # Cache write-backs before DMA (H.264, JPEG, PPA) run with interrupts off
+    # and hold a lock the USB driver takes; a whole frame's (614 KB at
+    # 640x480) lasts far longer than the 125 us the USB interrupt has to start
+    # the next transfer. In 8 KB pieces, each is short.
+    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS", True)
+    add_idf_sdkconfig_option("CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN", HexInt(0x2000))
+    # The USB interrupt path in IRAM, so processing cannot make it late.
+    add_idf_component(name="usb_camera_iram", path=str(Path(__file__).parent / "usb_camera_iram"))

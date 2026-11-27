@@ -798,12 +798,16 @@ packets wait there while the controller's DMA is held up by other memory
 traffic. The USB interrupt starts each queued transfer as the one before it
 ends and has one 125 us microframe to do it; ESP-IDF runs most of that path
 from flash, through the cache that frame processing keeps filling with PSRAM
-data. A linker fragment (`hti301/hti301_usb_iram`, about 4 KB of IRAM) moves
-it to IRAM, so the interrupt is not late. Cache write-backs before DMA
+data. A linker fragment (`video_core/usb_camera_iram`, about 4 KB of IRAM)
+moves it to IRAM, so the interrupt is not late. Cache write-backs before DMA
 (H.264, JPEG, PPA) run with interrupts off and hold a lock the USB driver
-takes, so the component has ESP-IDF do them in 8 KB pieces
+takes, so ESP-IDF does them in 8 KB pieces
 (`CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS`); a whole frame at once would
-outlast the microframe. With `log_timing`, lost packets are split into those the controller
+outlast the microframe. Every USB camera component (`hti301`,
+`thermal_master_p1`, `seek_compact_pro`) sets all of this up through
+`video_core`'s `usb_camera_protections()`: without it, a Thermal Master P1
+feeding the H.264 encoder at 25 frames/s starved the USB host until the task
+watchdog reset the chip. With `log_timing`, lost packets are split into those the controller
 did not run in time (and how many of them opened a transfer, which means the
 next transfer started late) and those received with errors. Commands (mode, range, palette,
 calibrate) are written to the camera terminal's Zoom (Absolute) control. The

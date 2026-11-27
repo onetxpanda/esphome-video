@@ -105,6 +105,16 @@ def usb_loop_guard():
             continue
         rel = os.path.relpath(f, COMP)
         check(not re.search(r"USBClient::loop\s*\(\s*\)\s*;", src), f"{rel} does not call USBClient::loop()")
+    # And every USB camera component must ask for the USB protections (chunked
+    # cache write-backs, the interrupt path in IRAM): without them a 25 frames/s
+    # camera feeding the encoder starved the USB host until the task watchdog
+    # reset the chip (they were only in hti301's code).
+    for f in sorted(glob.glob(os.path.join(COMP, "*", "__init__.py"))):
+        src = open(f).read()
+        if "register_usb_client" not in src:
+            continue
+        rel = os.path.relpath(f, COMP)
+        check("usb_camera_protections()" in src, f"{rel} asks for the USB camera protections")
 
 
 def pipeline_unit_tests():
