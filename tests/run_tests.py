@@ -90,6 +90,21 @@ PIPELINE_TESTS = [
 ]
 
 
+def usb_loop_guard():
+    # USBClient::loop() switches the component's loop off whenever no USB
+    # event is waiting; a camera component that runs its own work from loop()
+    # must call process_usb_events_() instead (the P1 and Seek stalled silently
+    # right after connecting).
+    print("== USB components keep their loop")
+    import glob, re
+    for f in sorted(glob.glob(os.path.join(COMP, "*", "*.cpp"))):
+        src = open(f).read()
+        if "usb_host::USBClient" not in src and "process_usb_events_" not in src and "USBClient::loop" not in src:
+            continue
+        rel = os.path.relpath(f, COMP)
+        check(not re.search(r"USBClient::loop\s*\(\s*\)\s*;", src), f"{rel} does not call USBClient::loop()")
+
+
 def pipeline_unit_tests():
     print("== pipeline unit tests")
     for name, srcs, incs in PIPELINE_TESTS:
@@ -413,6 +428,7 @@ def main():
     os.makedirs(BUILD, exist_ok=True)
     if not check(make_fixture(), "test stream fixture available"):
         sys.exit(1)
+    usb_loop_guard()
     pipeline_unit_tests()
     unit_tests()
     guard_tests()

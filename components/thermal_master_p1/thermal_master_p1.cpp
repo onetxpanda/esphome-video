@@ -795,6 +795,8 @@ void ThermalMasterP1::run_job_() {
   Job &j = this->jobs_.front();
   const Step &s = j.steps[this->step_];
   const uint32_t now = millis();
+  if (!this->step_sent_ && this->step_ == 0 && !this->status_polling_ && j.critical)
+    ESP_LOGD(TAG, "Start-up: %s", j.what.c_str());
   if (!this->step_sent_) {
     if (s.op == Op::STATUS) {
       if (!this->status_polling_)
@@ -954,7 +956,10 @@ void ThermalMasterP1::release_stream_() {
 }
 
 void ThermalMasterP1::loop() {
-  usb_host::USBClient::loop();
+  // Connect / disconnect events. Not USBClient::loop(): that switches this
+  // component's loop off whenever no USB event is waiting, and everything
+  // below (commands, timeouts, the stream) runs from this loop.
+  this->process_usb_events_();
   const uint32_t now = millis();
   switch (this->stage_) {
     case Stage::IDLE:

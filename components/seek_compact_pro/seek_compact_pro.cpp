@@ -408,7 +408,10 @@ void SeekCompactPro::send_credit_() {
 void SeekCompactPro::trigger_shutter() { this->shutter_want_ = true; }
 
 void SeekCompactPro::loop() {
-  usb_host::USBClient::loop();
+  // Connect / disconnect events. Not USBClient::loop(): that switches this
+  // component's loop off whenever no USB event is waiting, and everything
+  // below (commands, timeouts, the stream) runs from this loop.
+  this->process_usb_events_();
   const uint32_t now = millis();
   switch (this->stage_) {
     case Stage::IDLE:
