@@ -47,6 +47,16 @@ static void test_radiometric() {
   spike[10 * W + 10] = 60.0f;
   p.process(spike.data(), out.data(), W, H);
   CHECK(NEAR(out[10 * W + 10], 25.0f, 1e-4f));
+  // A row's last pixel is not compared with the next row's first: a cold left
+  // edge and a hot right edge stay as they are.
+  std::vector<float> edges(N, 25.0f);
+  for (int r = 0; r < H; r++) {
+    edges[r * W] = 5.0f;
+    edges[r * W + W - 1] = 45.0f;
+  }
+  p.set_options(o);
+  p.process(edges.data(), out.data(), W, H);
+  CHECK(NEAR(out[5 * W + W - 1], 45.0f, 1e-3f) && NEAR(out[6 * W], 5.0f, 1e-3f));
 
   // A change far above the motion threshold everywhere is movement: the
   // temporal filter passes it through at once instead of averaging.

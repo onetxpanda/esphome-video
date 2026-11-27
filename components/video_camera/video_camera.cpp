@@ -18,16 +18,22 @@ void VideoCamera::dump_config() {
   ESP_LOGCONFIG(TAG, "Video camera (hardware JPEG):\n  Quality: %u", this->quality_);
 }
 
+// Listeners hear of the stream starting when the first requester starts it
+// and of it stopping when the last one stops it.
 void VideoCamera::start_stream(camera::CameraRequester r) {
-  for (auto *l : this->listeners_)
-    l->on_stream_start();
+  const bool was = this->stream_ != 0;
   this->stream_ |= 1u << r;
+  if (!was)
+    for (auto *l : this->listeners_)
+      l->on_stream_start();
 }
 
 void VideoCamera::stop_stream(camera::CameraRequester r) {
-  for (auto *l : this->listeners_)
-    l->on_stream_stop();
+  const bool was = this->stream_ != 0;
   this->stream_ &= static_cast<uint8_t>(~(1u << r));
+  if (was && this->stream_ == 0)
+    for (auto *l : this->listeners_)
+      l->on_stream_stop();
 }
 
 bool VideoCamera::wants_frames() const {
@@ -116,6 +122,11 @@ void VideoCamera::loop() {
     this->state_ = PUBLISHED;
     for (auto *l : this->listeners_)
       l->on_camera_image(this->current_);
+    // Listeners that took the image at once have let it go already.
+    if (this->current_.use_count() == 1) {
+      this->current_.reset();
+      this->state_ = IDLE;
+    }
   }
 }
 

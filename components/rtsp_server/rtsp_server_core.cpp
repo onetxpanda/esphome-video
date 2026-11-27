@@ -163,15 +163,16 @@ void RtspServerCore::accept_() {
     }
     auto c = std::make_unique<Client>();
     c->fd = fd;
-    // All of this client's budget at once, so sending never reallocates (a
-    // growing vector needs old and new copies at the same time).
-    c->out.reserve(this->config_.max_client_buffer + SEND_SLACK);
+    // Over the limit: answer its first request with 503, then close; that
+    // needs no more than a small buffer.
+    c->reject = this->clients_.size() >= this->config_.max_clients;
+    // All of an accepted client's budget at once, so sending never
+    // reallocates (a growing vector needs old and new copies at the same time).
+    c->out.reserve(c->reject ? 512 : this->config_.max_client_buffer + SEND_SLACK);
     char ip[INET_ADDRSTRLEN] = {0};
     inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
     c->peer = std::string(ip) + ":" + std::to_string(ntohs(addr.sin_port));
     c->last_activity_ms = c->last_send_progress_ms = this->config_.now_ms();
-    // Over the limit: answer its first request with 503, then close.
-    c->reject = this->clients_.size() >= this->config_.max_clients;
     this->log_(LogLevel::DEBUG, c->peer + ": connected" + (c->reject ? " (over client limit)" : ""));
     this->clients_.push_back(std::move(c));
   }

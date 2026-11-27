@@ -73,6 +73,7 @@ class CameraSwitch : public Component, public video::RadiometricSource {
   std::atomic<bool> passing_{false};  // frames go on to the chain
   std::atomic<uint32_t> passed_{0};   // frames passed on, for the diagnostic log
   uint32_t passing_since_ms_{0};
+  uint32_t progress_logged_ms_{0};
   // Frames of two cameras (both plugged in) reach the chain one at a time; a
   // frame arriving while another is delivered is dropped, not waited for.
   std::mutex deliver_mutex_;

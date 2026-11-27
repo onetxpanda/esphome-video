@@ -134,9 +134,18 @@ bool Processor::process(const float *in, float *out, uint16_t width, uint16_t he
   // 2. Isolated-pixel filter along rows.
   if (this->opt_.outlier_level > 0.0f) {
     const float level = this->opt_.outlier_level;
-    for (size_t i = 1; i + 1 < n; i++)
-      if (std::fabs(w[i] - w[i - 1]) >= level && std::fabs(w[i] - w[i + 1]) >= level)
-        w[i] = (w[i - 1] + w[i + 1]) / 2.0f;
+    // Within each row (a row's end is not next to the next row's start), and
+    // against the original left neighbour, not one this pass has repaired.
+    for (int r = 0; r < height; r++) {
+      float *row = w + static_cast<size_t>(r) * width;
+      float left = row[0];
+      for (int c = 1; c + 1 < width; c++) {
+        const float here = row[c];
+        if (std::fabs(here - left) >= level && std::fabs(here - row[c + 1]) >= level)
+          row[c] = (left + row[c + 1]) / 2.0f;
+        left = here;
+      }
+    }
   }
 
   // 3. Temporal filter, then edge-preserving smoothing.

@@ -70,7 +70,7 @@ void SeekCompactPro::dump_config() {
     ESP_LOGCONFIG(TAG, "  Firmware: %s\n  Chip ID: %s", this->firmware_.c_str(), this->chip_id_.c_str());
   if (!this->table_.empty())
     ESP_LOGCONFIG(TAG, "  Factory calibration: %s (thermography version %d)",
-                  this->factory_.valid ? "supported" : "not supported: no temperatures", this->factory_.version);
+                  this->factory_.valid ? "supported" : "not supported: no temperatures", static_cast<int>(this->factory_.version));
 #ifdef USE_BINARY_SENSOR
   LOG_BINARY_SENSOR("  ", "Streaming", this->streaming_sensor_);
 #endif
@@ -284,7 +284,7 @@ void SeekCompactPro::run_init_() {
   parse_factory(this->table_.data(), this->table_.size(), &this->factory_);
   if (this->factory_.valid) {
     ESP_LOGI(TAG, "Camera started. Firmware %s, chip %s, factory calibration version %d", this->firmware_.c_str(),
-             this->chip_id_.c_str(), this->factory_.version);
+             this->chip_id_.c_str(), static_cast<int>(this->factory_.version));
   } else {
     ESP_LOGE(TAG, "Camera started, but its factory calibration (%u bytes) is not one this component supports: "
                   "no temperatures", static_cast<unsigned>(this->table_.size()));

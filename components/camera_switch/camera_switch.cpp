@@ -80,9 +80,11 @@ void CameraSwitch::loop() {
       this->passing_since_ms_ = now;
       this->passing_.store(true);
     }
-  } else if (this->wait_for_api_ && now - this->passing_since_ms_ <= 120000) {
-    // Diagnostics: the chain's progress twice a second for its first 2 minutes.
-    ESP_LOGW(TAG, "Chain running %.1f s: %u frames passed on", (now - this->passing_since_ms_) / 1000.0f,
+  } else if (this->wait_for_api_ && now - this->passing_since_ms_ <= 120000 &&
+             now - this->progress_logged_ms_ >= 10000) {
+    // Diagnostics: the chain's progress every 10 s for its first 2 minutes.
+    this->progress_logged_ms_ = now;
+    ESP_LOGI(TAG, "Chain running %.1f s: %u frames passed on", (now - this->passing_since_ms_) / 1000.0f,
              static_cast<unsigned>(this->passed_.load()));
   }
   uint32_t last[MAX_CAMERAS];
